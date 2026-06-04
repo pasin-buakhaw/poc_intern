@@ -1,0 +1,5 @@
+streamlit==1.37.1
+rank-bm25==0.2.2
+pythainlp==5.3.4
+pandas>=2.0,<3
+numpy>=1.24,<2
