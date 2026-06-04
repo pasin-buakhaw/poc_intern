@@ -15,6 +15,45 @@ def _query_option_label(qdf, i):
     return f"uid {int(row['uid'])} · ฎีกา {row.get('deka_no', '-')} · {crime_str}"
 
 
+def _bullets(items):
+    items = [str(x).strip() for x in (items or []) if str(x).strip()]
+    if not items:
+        st.write("—")
+        return
+    st.markdown("\n".join(f"- {x}" for x in items))
+
+
+def _render_query_preview(approach, row):
+    """แสดง 'ข้อความที่จะใช้ค้น' ให้อ่านง่ายตามชนิดข้อมูลของแต่ละ approach."""
+    key = approach["key"]
+
+    if key == "subfacts":
+        entries = sc.parse_cell(row.get("subfacts", "")) or []
+        with st.container(height=260, border=True):
+            if not entries:
+                st.write("—")
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                st.markdown(f"**{e.get('crime', '')}**")
+                subs = e.get("subfacts") or []
+                if isinstance(subs, str):
+                    subs = [subs]
+                _bullets(subs)
+        return
+
+    if key in ("crimes", "laws"):
+        col = "crimes" if key == "crimes" else "laws_list_matra"
+        with st.container(border=True):
+            _bullets(sc.parse_cell(row.get(col, "")))
+        return
+
+    # long_text / legal_fact — ข้อความยาว: กล่องเลื่อนอ่าน
+    qtext = sc.query_text(key, row)
+    with st.container(height=220, border=True):
+        st.write(qtext or "—")
+
+
 def _render_left(approach, bundle):
     """Explanation + which field is searched + pick a demo query (with label)."""
     key = approach["key"]
@@ -42,8 +81,7 @@ def _render_left(approach, bundle):
         st.rerun()
 
     st.caption(f"ข้อความที่จะใช้ค้น (= {approach['field'].split(' (')[0]} ของ query นี้)")
-    st.text_area("query text", value=qtext, height=120, disabled=True,
-                 key=f"demo_txt_{key}", label_visibility="collapsed")
+    _render_query_preview(approach, row)
 
     # label answer key — which candidates are relevant (no metric numbers)
     rel = sc.relevant_uids(row, thr=2)
