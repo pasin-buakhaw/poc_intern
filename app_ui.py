@@ -1,4 +1,10 @@
-"""2-panel approach page: left = explanation + demo query, right = search + correctness."""
+"""2-panel approach page: left = explanation + demo query, right = search + correctness.
+
+Input style differs by approach:
+  - Subfacts        : pick / type ONE subfact
+  - Crimes / Laws   : tag keywords (multiselect) — no free text
+  - Long text / Legal fact : free text
+"""
 
 import streamlit as st
 
@@ -15,75 +21,93 @@ def _query_option_label(qdf, i):
     return f"uid {int(row['uid'])} · ฎีกา {row.get('deka_no', '-')} · {crime_str}"
 
 
-def _bullets(items):
-    items = [str(x).strip() for x in (items or []) if str(x).strip()]
-    if not items:
-        st.write("—")
-        return
-    st.markdown("\n".join(f"- {x}" for x in items))
+def _facet_keywords(facet, row):
+    """The query's own crime/law keywords (list)."""
+    col = "crimes" if facet == "crimes" else "laws_list_matra"
+    return [str(x).strip() for x in (sc.parse_cell(row.get(col, "")) or []) if str(x).strip()]
 
 
-def _render_query_preview(approach, row):
-    """แสดง 'ข้อความที่จะใช้ค้น' ให้อ่านง่ายตามชนิดข้อมูลของแต่ละ approach."""
-    key = approach["key"]
-
-    if key == "subfacts":
-        entries = sc.parse_cell(row.get("subfacts", "")) or []
-        with st.container(height=260, border=True):
-            if not entries:
-                st.write("—")
-            for e in entries:
-                if not isinstance(e, dict):
-                    continue
-                st.markdown(f"**{e.get('crime', '')}**")
-                subs = e.get("subfacts") or []
-                if isinstance(subs, str):
-                    subs = [subs]
-                _bullets(subs)
-        return
-
-    if key in ("crimes", "laws"):
-        col = "crimes" if key == "crimes" else "laws_list_matra"
-        with st.container(border=True):
-            _bullets(sc.parse_cell(row.get(col, "")))
-        return
-
-    # long_text / legal_fact — ข้อความยาว: กล่องเลื่อนอ่าน
-    qtext = sc.query_text(key, row)
-    with st.container(height=220, border=True):
-        st.write(qtext or "—")
+def _subfact_options(row):
+    """[(label, value)] one entry per individual subfact string of the query."""
+    opts = []
+    for e in sc.parse_cell(row.get("subfacts", "")) or []:
+        if not isinstance(e, dict):
+            continue
+        crime = e.get("crime", "")
+        subs = e.get("subfacts") or []
+        if isinstance(subs, str):
+            subs = [subs]
+        for s in subs:
+            s = str(s).strip()
+            if s:
+                short = s[:55] + ("…" if len(s) > 55 else "")
+                opts.append((f"[{crime}] {short}", s))
+    return opts
 
 
+# --------------------------------------------------------------------------- #
+# left panel
+# --------------------------------------------------------------------------- #
 def _render_left(approach, bundle):
-    """Explanation + which field is searched + pick a demo query (with label)."""
     key = approach["key"]
     qdf, cases = bundle["query_df"], bundle["cases"]
 
     st.subheader(approach["label"])
     st.caption(approach["desc"])
-    # ★ ระบุชัดเจนว่า approach นี้เอา "คอลัมน์ไหนของ query" ไปค้น
     st.info(f"🔎 ค้นด้วยข้อมูล: **{approach['field']}**\n\n"
             f"(index ฝั่งคดี = คอลัมน์เดียวกันของ candidate · granularity: {approach['granularity']})")
 
     st.divider()
-    st.markdown("**Demo query** — เลือกตัวอย่าง แล้วกดส่งข้อความด้านล่างไปค้นทางขวา")
+    st.markdown("**Demo query** — เลือกตัวอย่าง แล้วส่งไปค้นทางขวา")
     qi = st.selectbox("query ตัวอย่าง", options=list(range(len(qdf))),
                       format_func=lambda i: _query_option_label(qdf, i),
                       key=f"demo_sel_{key}")
     row = qdf.iloc[qi]
-    qtext = sc.query_text(key, row)
+    facet = approach.get("keyword_facet")
 
-    # ★ ปุ่มส่งไปค้น อยู่ใต้ dropdown ทันที
-    if st.button("ใช้ query นี้ค้นหา →", key=f"use_{key}", use_container_width=True):
-        st.session_state[f"q_{key}"] = qtext
-        st.session_state[f"demo_qtext_{key}"] = qtext
-        st.session_state[f"demo_qi_{key}"] = qi
-        st.rerun()
+    # ---- input depends on approach ----
+    if facet:  # Crimes / Laws — tag keywords
+        tags = _facet_keywords(facet, row)
+        if st.button("ใช้ keyword เหล่านี้ค้นหา →", key=f"use_{key}",
+                     use_container_width=True, disabled=not tags):
+            st.session_state[f"kw_{key}"] = tags
+            st.session_state[f"demo_qi_{key}"] = qi
+            st.session_state[f"demo_sig_{key}"] = tuple(sorted(tags))
+            st.rerun()
+        st.caption("keyword ของ query นี้ (กดปุ่มเพื่อ tag ไปค้นทางขวา)")
+        st.markdown(" ".join(f"`{t}`" for t in tags) if tags else "—")
 
-    st.caption(f"ข้อความที่จะใช้ค้น (= {approach['field'].split(' (')[0]} ของ query นี้)")
-    _render_query_preview(approach, row)
+    elif key == "subfacts":  # one subfact only
+        opts = _subfact_options(row)
+        st.caption("เลือก **1 subfact** เพื่อใช้ค้น")
+        chosen = ""
+        if opts:
+            si = st.selectbox("subfact", options=list(range(len(opts))),
+                              format_func=lambda i: opts[i][0], key=f"sfsel_{key}")
+            chosen = opts[si][1]
+            with st.container(height=110, border=True):
+                st.write(chosen)
+        else:
+            st.write("—")
+        if st.button("ใช้ subfact นี้ค้นหา →", key=f"use_{key}",
+                     use_container_width=True, disabled=not opts):
+            st.session_state[f"q_{key}"] = chosen
+            st.session_state[f"demo_qi_{key}"] = qi
+            st.session_state[f"demo_sig_{key}"] = chosen.strip()
+            st.rerun()
 
-    # label answer key — which candidates are relevant (no metric numbers)
+    else:  # Long text / Legal fact — free text
+        qtext = sc.query_text(key, row)
+        if st.button("ใช้ query นี้ค้นหา →", key=f"use_{key}", use_container_width=True):
+            st.session_state[f"q_{key}"] = qtext
+            st.session_state[f"demo_qi_{key}"] = qi
+            st.session_state[f"demo_sig_{key}"] = qtext.strip()
+            st.rerun()
+        st.caption(f"ข้อความที่จะใช้ค้น (= {approach['field'].split(' (')[0]} ของ query นี้)")
+        with st.container(height=220, border=True):
+            st.write(qtext or "—")
+
+    # ---- label answer key (which candidates are relevant) ----
     rel = sc.relevant_uids(row, thr=2)
     graded = sc.graded_rel(row)
     st.caption("เฉลย (label): candidate ของ query นี้ — ✓ = relevant (ควรค้นเจอ)")
@@ -101,34 +125,42 @@ def _render_left(approach, bundle):
     st.dataframe(rows, hide_index=True, use_container_width=True)
 
 
+# --------------------------------------------------------------------------- #
+# right panel
+# --------------------------------------------------------------------------- #
 def _render_right(approach, bundle):
-    """Free-form search (+ keyword facets for Crimes/Laws) + correctness marks."""
     key = approach["key"]
     index, cases, cand_df = bundle["indexes"][key], bundle["cases"], bundle["cand_df"]
     qdf = bundle["query_df"]
+    facet = approach.get("keyword_facet")
 
     st.subheader("ค้นหา")
-    extra = ""
-    facet = approach.get("keyword_facet")
-    if facet:
+    if facet:  # Crimes / Laws — tag picker only
         crimes, laws = sc.collect_keywords(cand_df)
-        opts = crimes if facet == "crimes" else laws
+        base = crimes if facet == "crimes" else laws
+        sel = st.session_state.get(f"kw_{key}", [])
+        options = sorted(set(base) | set(sel))  # keep demo-set tags valid even if not in corpus
         label = "ฐานความผิด" if facet == "crimes" else "มาตรากฎหมาย"
-        picks = st.multiselect(f"เลือก {label} — เลือกหลายอันได้", options=opts, key=f"kw_{key}")
-        extra = " ".join(picks)
-
-    q = st.text_input("พิมพ์ค้นหา (ภาษาไทย)", key=f"q_{key}",
-                      placeholder="เช่น ปลอมเอกสาร, เมทแอมเฟตามีน, ฉ้อโกง")
-    query = f"{q} {extra}".strip()
+        picks = st.multiselect(f"แท็ก {label} (เลือกได้หลายอัน)", options=options, key=f"kw_{key}")
+        query = " ".join(picks)
+        sig = tuple(sorted(picks))
+    else:  # Subfacts / Long text / Legal fact — free text
+        ph = "พิมพ์ subfact" if key == "subfacts" else "พิมพ์ค้นหา (ภาษาไทย)"
+        q = st.text_input(ph, key=f"q_{key}",
+                          placeholder="เช่น ปลอมเอกสาร, เมทแอมเฟตามีน, ฉ้อโกง")
+        query = q.strip()
+        sig = query
 
     if not query:
-        st.info("พิมพ์คำค้น หรือเลือก demo query ทางซ้ายแล้วกด 'ใช้ query นี้ค้นหา'")
+        msg = ("เลือกแท็ก keyword หรือกด 'ใช้ keyword เหล่านี้ค้นหา' ทางซ้าย"
+               if facet else "พิมพ์คำค้น หรือเลือก demo query ทางซ้ายแล้วกดปุ่มส่ง")
+        st.info(msg)
         return
 
-    # demo mode: search text มาจาก demo query -> รู้เฉลย จึงเช็คได้ว่า "ค้นถูกไหม"
-    demo_qtext = st.session_state.get(f"demo_qtext_{key}", "")
+    # demo mode: ค้นมาจาก demo query (signature ตรงกัน) -> รู้เฉลย เช็คได้ว่าค้นถูกไหม
     demo_qi = st.session_state.get(f"demo_qi_{key}")
-    is_demo = bool(demo_qtext) and not extra and q.strip() == demo_qtext.strip()
+    demo_sig = st.session_state.get(f"demo_sig_{key}")
+    is_demo = demo_qi is not None and demo_sig == sig
     relevant = sc.relevant_uids(qdf.iloc[demo_qi], thr=2) if is_demo else set()
 
     results = index.search(query, k=K)
@@ -139,7 +171,6 @@ def _render_right(approach, bundle):
     if is_demo:
         ranked = sc.ranked_uids(results)
         found = sorted(relevant & set(ranked[:K]))
-        miss = sorted(relevant - set(ranked[:K]))
         msg = f"ค้นถูกไหม: พบคดีที่ relevant **{len(found)}/{len(relevant)}** ใน top-{K}"
         (st.success if found else st.warning)(msg)
         exp = []
@@ -151,9 +182,7 @@ def _render_right(approach, bundle):
     st.caption(f"ผลลัพธ์ top {K}" + (" — ✓ = คดีที่ relevant ตามเฉลย" if is_demo else ""))
     for rank, (unit, score) in enumerate(results):
         st.divider()
-        mark = None
-        if is_demo:
-            mark = "✓" if int(unit["uid"]) in relevant else "·"
+        mark = ("✓" if int(unit["uid"]) in relevant else "·") if is_demo else None
         render_result(unit, score, cases, key=f"{key}_{rank}", mark=mark)
 
 
