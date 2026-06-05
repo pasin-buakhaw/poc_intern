@@ -234,4 +234,6 @@ def extract_laws_from_text(text, token, base_url=DEFAULT_BASE_URL, *,
         return [], [], ""
     topics = [text]
     md = search_legal_corpus(topics, token, base_url=base_url, k=k_results)
-    return parse_law_sections(md), topics, md
+    # the API may return sections across several law groups (more than k for long
+    # inputs); cap to the top k_results so the extracted count is predictable.
+    return parse_law_sections(md)[:k_results], topics, md

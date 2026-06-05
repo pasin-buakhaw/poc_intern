@@ -21,12 +21,28 @@ import datetime
 import json
 import os
 import sys
+import time
 
 import fourcorners as fc
 import search_core as sc
 
 DEPTH = 150
 K_RESULTS = 3
+RETRIES = 4  # transient 502/connection-reset retries with backoff
+
+
+def _extract_with_retry(text, token, base_url):
+    """extract_laws_from_text with retries on transient API errors."""
+    last = None
+    for attempt in range(RETRIES):
+        try:
+            laws, _, _ = fc.extract_laws_from_text(
+                text, token, base_url=base_url, k_results=K_RESULTS)
+            return laws
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(1.5 * (attempt + 1))
+    raise last
 _HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(_HERE, "data", "extract_law_bench.json")
 
@@ -62,11 +78,10 @@ def main():
                 if text not in cache:
                     calls += 1
                     try:
-                        laws, _, _ = fc.extract_laws_from_text(
-                            text, token, base_url=base_url, k_results=K_RESULTS)
+                        laws = _extract_with_retry(text, token, base_url)
                         cache[text] = sc.ranked_uids(idx.search(laws, k=DEPTH)) if laws else []
-                    except Exception as e:  # noqa: BLE001
-                        print(f"  ! {a['key']} q{qi}: {e}")
+                    except Exception as e:  # noqa: BLE001 — give up after retries
+                        print(f"  ! {a['key']} q{qi} (after {RETRIES} tries): {e}")
                         cache[text] = []
                 rankings_for_q.append(cache[text])
             per_query.append(rankings_for_q or [[]])

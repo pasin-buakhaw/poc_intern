@@ -53,12 +53,12 @@ def main():
             ]
         included.append(a)
 
-    print(f"\nBenchmark @k={k}  (each approach vs its own relevant basis)\n")
-    hdr = f"{'approach':28} {'basis':26} {'nDCG':>6} {'Hit':>6} {'Recall':>7} {'Prec':>6} {'MRR':>6}"
+    sc_col, thr = "relevance_score", 1  # common basis for every approach
+    print(f"\nBenchmark @k={k}  (all approaches vs {sc_col}>={thr})\n")
+    hdr = f"{'approach':28} {'nDCG':>6} {'Hit':>6} {'Recall':>7} {'Prec':>6} {'MRR':>6}"
     print(hdr); print("-" * len(hdr))
     table = []
     for a in included:
-        sc_col, thr = a["relevance"]
         H, R, P, M, N = [], [], [], [], []
         for i, (_, row) in enumerate(qdf.iterrows()):
             rl = rankings[a["key"]][i]
@@ -69,9 +69,9 @@ def main():
             P.append(_mean([sc.precision_at_k(r, rel, k) for r in rl]))
             M.append(_mean([sc.mrr_at_k(r, rel, k) for r in rl]))
             N.append(_mean([sc.ndcg_at_k(r, gr, k) for r in rl]))
-        table.append((a["label"], f"{sc_col}>={thr}", _mean(N), _mean(H), _mean(R), _mean(P), _mean(M)))
-    for lab, basis, n, h, r, p, m in sorted(table, key=lambda t: -t[2]):
-        print(f"{lab:28} {basis:26} {n:6.3f} {h:6.3f} {r:7.3f} {p:6.3f} {m:6.3f}")
+        table.append((a["label"], _mean(N), _mean(H), _mean(R), _mean(P), _mean(M)))
+    for lab, n, h, r, p, m in sorted(table, key=lambda t: -t[2]):
+        print(f"{lab:28} {n:6.3f} {h:6.3f} {r:7.3f} {p:6.3f} {m:6.3f}")
     print()
 
 

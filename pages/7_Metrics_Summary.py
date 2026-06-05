@@ -148,12 +148,13 @@ if FC_APPROACHES:
         st.caption("ยังไม่มีผล precomputed — รัน `precompute_extract_law.py` หรือติ๊ก recompute live")
     st.divider()
 
-# --- controls: only k (relevance basis is now per-approach) --------------------
+# --- controls: only k (every approach is scored on relevance_score >= 1) -------
+RELEVANCE = ("relevance_score", 1)
 k = st.selectbox("k (top-k)", [1, 3, 4, 5, 10], index=2)
 st.caption(
-    "ℹ️ แต่ละ approach วัด relevant ด้วยเกณฑ์ของตัวเอง (คอลัมน์ **relevant basis** ในตาราง) — "
-    "Subfacts→`subfacts_score`, Legal fact→`legal_fact_result_score`, ที่เหลือ→`relevance_score≥1`; "
-    "Extract Law 3 variant ผูกกับ source · nDCG ใช้ graded ของเกณฑ์นั้น → เทียบข้าม approach เป็นค่าชี้นำ"
+    "ℹ️ ทุก approach วัด relevant ด้วยเกณฑ์เดียวกัน: **`relevance_score ≥ 1`** "
+    "(= candidate ที่ถูก label ว่าเกี่ยวข้องอย่างน้อย 1 มิติ) — เทียบ apples-to-apples · "
+    "nDCG ใช้ graded `relevance_score` (1/2/3) เป็นน้ำหนัก"
 )
 
 
@@ -163,15 +164,15 @@ def _mean(xs):
     return sum(xs) / len(xs) if xs else float("nan")
 
 
-# --- compute per-approach averages (each vs its OWN relevance basis) -----------
+# --- compute per-approach averages (all vs relevance_score >= 1) ---------------
+score_col, thr = RELEVANCE
 rows = []
 for a in included:
-    score_col, thr = a["relevance"]
     hit, rec, prec, mrr, ndcg = [], [], [], [], []
     for i, (_, row) in enumerate(qdf.iterrows()):
         ranking_list = rankings[a["key"]][i]   # list of ranked-uid lists (1+ per query)
         rel = sc.relevant_uids(row, score_col=score_col, thr=thr)
-        graded = sc.graded_rel(row, score_col=score_col)  # nDCG uses this approach's basis
+        graded = sc.graded_rel(row, score_col=score_col)
         # metric per sub-search, then average within this query
         hit.append(_mean([sc.hit_at_k(r, rel, k) for r in ranking_list]))
         rec.append(_mean([sc.recall_at_k(r, rel, k) for r in ranking_list]))
@@ -181,7 +182,6 @@ for a in included:
     rows.append({
         "approach": a["label"],
         "granularity": a["granularity"],
-        "relevant basis": f"{score_col}≥{thr}",
         f"nDCG@{k}": round(_mean(ndcg), 3),
         f"Hit@{k}": round(_mean(hit), 3),
         f"Recall@{k}": round(_mean(rec), 3),
@@ -210,8 +210,6 @@ with st.expander("นิยาม metric"):
 - **Precision@{k}** — สัดส่วน top-{k} ที่ relevant
 - **MRR@{k}** — 1/อันดับของ relevant ตัวแรก
 - **Subfacts / Extract Law (subfact)** วัดแบบค้นทีละ subfact แล้วเฉลี่ยต่อ query (ตรงกับหน้า approach)
-- **relevant basis ต่อ approach** — Subfacts→`subfacts_score≥1`, Legal fact→`legal_fact_result_score≥1`,
-  Long text/Crimes/Laws→`relevance_score≥1`; Extract Law variant ผูกกับ source (long→relevance, legal→legal_fact, subfact→subfacts)
-- nDCG ใช้ graded ของเกณฑ์นั้น ๆ (binary 0/1 สำหรับ subfact/legal-fact, 1–3 สำหรับ relevance_score)
+- ทุก approach วัด relevant ด้วย **`relevance_score ≥ 1`** เหมือนกัน · nDCG ใช้ graded `relevance_score` (1/2/3)
 """
     )

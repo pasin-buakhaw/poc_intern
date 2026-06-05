@@ -96,9 +96,9 @@ pipeline จริง: **ข้อความ → semantic search → มาต
 โหลดไฟล์นี้แสดงผลทันที **ไม่ต้องใส่ token** (ติ๊ก "🔁 recompute live" เพื่อคิดสดได้) · ดูตารางใน CLI ได้ด้วย
 `python show_benchmark.py 3`
 
-**Relevance ต่อ approach:** แต่ละ approach วัด relevant ด้วยเกณฑ์ของตัวเอง (Subfacts→`subfacts_score`,
-Legal fact→`legal_fact_result_score`, ที่เหลือ→`relevance_score≥1`) แสดงในคอลัมน์ `relevant basis`
-ของตาราง — nDCG ใช้ graded ของเกณฑ์นั้น ๆ (เทียบข้าม approach เป็นค่าชี้นำ)
+**Relevance ในตาราง benchmark:** ทุก approach วัด relevant ด้วยเกณฑ์เดียวกัน **`relevance_score ≥ 1`**
+(candidate ที่ถูก label ว่าเกี่ยวข้องอย่างน้อย 1 มิติ) เพื่อเทียบ apples-to-apples · nDCG ใช้ graded
+`relevance_score` (1/2/3) · (ค่าเกณฑ์ต่อ approach ยังเก็บใน `APPROACHES[*]["relevance"]` ใช้ในหน้า Extract Law)
 
 ## เฟสถัดไป (out of scope)
 - retriever แบบ embedding / hybrid / re-rank — เพิ่มเข้า `APPROACHES` ใน `search_core.py` ได้เลย
