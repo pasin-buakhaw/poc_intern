@@ -88,11 +88,13 @@ pipeline จริง: **ข้อความ → semantic search → มาต
 
 หน้าเว็บรวมเป็นหน้าเดียว มี dropdown เลือก variant (แบบ subfact เลือก subfact ทีละอัน)
 
-**Token:** ช่อง 🔑 วาง Bearer token เอง (เก็บใน session) · env `FOURCORNERS_TOKEN`/`FOURCORNERS_BASE_URL`
-แทนได้ · ต้องมี SSH tunnel ไป API (ดู `run_local.sh`)
+**Token + Base URL:** ช่อง 🔑 ในหน้า Extract Law / Metrics — วาง Bearer token + Base URL เอง
+(เก็บใน session เท่านั้น) · ดีฟอลต์ base = **`https://fourcorners-toolkits-api.visai.ai`** (public,
+ไม่ต้องมี tunnel — ใช้บน deployed app ได้เลย แค่วาง token) · ใช้ private network ก็ได้โดยตั้ง
+`FOURCORNERS_BASE_URL=http://localhost:6767` + เปิด SSH tunnel · env `FOURCORNERS_TOKEN`/`FOURCORNERS_BASE_URL` แทนได้
 
-**Benchmark (precomputed):** รัน `python precompute_extract_law.py` (ต้องมี tunnel+token) → เขียน
-`data/extract_law_bench.json` (rankings ของ 3 variant ทุก query, ~363 API calls) · หน้า **Metrics Summary**
+**Benchmark (precomputed):** รัน `python precompute_extract_law.py` (ต้องมี token) → เขียน
+`data/extract_law_bench.json` (rankings 6 variant: top-3 + all ทุก query, ~363 API calls) · หน้า **Metrics Summary**
 โหลดไฟล์นี้แสดงผลทันที **ไม่ต้องใส่ token** (ติ๊ก "🔁 recompute live" เพื่อคิดสดได้) · ดูตารางใน CLI ได้ด้วย
 `python show_benchmark.py 3`
 

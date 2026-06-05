@@ -23,8 +23,9 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - surfaced in the UI instead
     requests = None
 
-# Default from USAGE 2.md / manifest.json (private network — needs a tunnel).
-DEFAULT_BASE_URL = "http://10.204.100.77:6767"
+# Public HTTPS endpoint (reachable without a tunnel — works from deployed apps).
+# For the private network use http://10.204.100.77:6767 via an SSH tunnel instead.
+DEFAULT_BASE_URL = "https://fourcorners-toolkits-api.visai.ai"
 
 
 # --------------------------------------------------------------------------- #
