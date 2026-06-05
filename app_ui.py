@@ -312,7 +312,8 @@ def render_extract_law_page(preselect=None):
             with st.expander("ดู raw markdown จาก API"):
                 st.code(raw_md or "(ว่าง)")
             return
-        st.success(f"ดึงมาได้ **{len(laws)} มาตรา** → ใช้ค้นคดีที่อ้างมาตราเดียวกัน")
+        laws = laws[:run["k_results"]]  # use only top-k extracted มาตรา for the search
+        st.success(f"ใช้ **top-{run['k_results']}** ({len(laws)} มาตรา) → ค้นคดีที่อ้างมาตราเดียวกัน")
         st.markdown(" ".join(f"`{l}`" for l in laws))
 
         rrow = qdf.iloc[run["qi"]]
