@@ -206,9 +206,10 @@ def render_approach_page(key):
 # Extract Law from text (FourCorners semantic search -> Laws index)
 # --------------------------------------------------------------------------- #
 @st.cache_data(show_spinner=False)
-def _cached_extract(text, token, base_url, k_results):
-    """Cache one FourCorners call per (text, token, base, k) so reruns are free."""
-    return fc.extract_laws_from_text(text, token, base_url=base_url, k_results=k_results)
+def _cached_extract(text, token, base_url, k_results, cap):
+    """Cache one FourCorners call per (text, token, base, k, cap) so reruns are free."""
+    return fc.extract_laws_from_text(text, token, base_url=base_url,
+                                     k_results=k_results, cap=cap)
 
 
 def render_extract_law_page(preselect=None):
@@ -263,7 +264,13 @@ def render_extract_law_page(preselect=None):
                                 value=sc.source_text(source_field, row), height=180,
                                 key=f"text_{key}")
 
-        k_results = st.slider("k (จำนวนมาตราที่ดึงจาก search)", 3, 20, 3, key=f"kres_{key}")
+        use_all = approach.get("use_all", False)
+        if use_all:
+            k_results, cap = 20, False  # k off: pull max (20) and use every มาตรา
+            st.caption("**ปิด k** — ใช้มาตราทั้งหมดที่ดึงได้ (สูงสุด 20 ตามที่ API คืน)")
+        else:
+            k_results = st.slider("k (จำนวนมาตราที่ดึงจาก search)", 3, 20, 3, key=f"kres_{key}")
+            cap = True
         st.caption("ข้อความถูกส่งเป็น topic เดียวเข้า semantic search")
         go = st.button("ดึงมาตรา แล้วค้นคดี →", use_container_width=True,
                        disabled=not (token and text.strip()), key=f"go_{key}")
@@ -288,7 +295,7 @@ def render_extract_law_page(preselect=None):
         st.subheader("ผลลัพธ์")
         if go:
             st.session_state[f"run_{key}"] = {
-                "text": text, "qi": qi, "k_results": k_results}
+                "text": text, "qi": qi, "k_results": k_results, "cap": cap}
 
         run = st.session_state.get(f"run_{key}")
         if not run:
@@ -297,7 +304,7 @@ def render_extract_law_page(preselect=None):
 
         try:
             laws, topics, raw_md = _cached_extract(
-                run["text"], token, base_url, run["k_results"])
+                run["text"], token, base_url, run["k_results"], run["cap"])
         except Exception as e:  # noqa: BLE001 — show API errors to the user
             st.error(f"เรียก FourCorners ไม่สำเร็จ: {e}")
             return
@@ -309,8 +316,11 @@ def render_extract_law_page(preselect=None):
             with st.expander("ดู raw markdown จาก API"):
                 st.code(raw_md or "(ว่าง)")
             return
-        laws = laws[:run["k_results"]]  # use only top-k extracted มาตรา for the search
-        st.success(f"ใช้ **top-{run['k_results']}** ({len(laws)} มาตรา) → ค้นคดีที่อ้างมาตราเดียวกัน")
+        if run["cap"]:
+            laws = laws[:run["k_results"]]
+            st.success(f"ใช้ **top-{run['k_results']}** ({len(laws)} มาตรา) → ค้นคดีที่อ้างมาตราเดียวกัน")
+        else:
+            st.success(f"ใช้ **ทั้งหมด {len(laws)} มาตรา** (ปิด k) → ค้นคดีที่อ้างมาตราเดียวกัน")
         st.markdown(" ".join(f"`{l}`" for l in laws))
 
         rrow = qdf.iloc[run["qi"]]

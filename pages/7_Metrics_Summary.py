@@ -91,6 +91,9 @@ def fourcorners_rankings(approach_key, token, base_url, k_results,
     b = sc.build_indexes()
     a = sc.APPROACH_BY_KEY[approach_key]
     idx = b["indexes"][a["reuses_index"]]
+    use_all = a.get("use_all", False)
+    api_k = 20 if use_all else k_results  # k off -> pull max
+    cap = not use_all
     cache = {}
     per_query = []
     for _, row in b["query_df"].iterrows():
@@ -99,7 +102,7 @@ def fourcorners_rankings(approach_key, token, base_url, k_results,
             if text not in cache:
                 try:
                     laws, _, _ = fc.extract_laws_from_text(
-                        text, token, base_url=base_url, k_results=k_results)
+                        text, token, base_url=base_url, k_results=api_k, cap=cap)
                     cache[text] = sc.ranked_uids(idx.search(laws, k=depth)) if laws else []
                 except Exception:  # noqa: BLE001 — failed/empty search = miss
                     cache[text] = []
@@ -142,7 +145,7 @@ if FC_APPROACHES:
             if pre is not None:
                 rankings[a["key"]] = pre
                 included.append(a)
-        st.caption(f"ใช้ผล precomputed (k_results={bench.get('k_results')}, "
+        st.caption(f"ใช้ผล precomputed (top-{bench.get('top_k')} / all=k≤{bench.get('api_k')}, "
                    f"สร้างเมื่อ {bench.get('generated', '-')}) · ติ๊กด้านบนเพื่อคิดสดด้วย token")
     else:
         st.caption("ยังไม่มีผล precomputed — รัน `precompute_extract_law.py` หรือติ๊ก recompute live")

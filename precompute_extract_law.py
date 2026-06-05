@@ -27,30 +27,39 @@ import fourcorners as fc
 import search_core as sc
 
 DEPTH = 150
-K_RESULTS = 3
+API_K = 20   # pull as many sections as the API allows (k off)
+TOP_K = 3    # the "top-3" variants slice to this
 RETRIES = 4  # transient 502/connection-reset retries with backoff
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(_HERE, "data", "extract_law_bench.json")
 
-def _extract_with_retry(text, token, base_url):
-    """extract_laws_from_text with retries on transient API errors."""
+# (source_field, granularity, top-k key, all key) — one API call per text serves both
+SOURCES = [
+    ("long_text", "case", "extract_law_long", "extract_law_long_all"),
+    ("legal_fact_result", "case", "extract_law_legal", "extract_law_legal_all"),
+    ("subfacts", "subfact", "extract_law_subfact", "extract_law_subfact_all"),
+]
+
+
+def _texts(source_field, granularity, row):
+    if granularity == "subfact":
+        return sc.subfact_list(row)
+    return [sc.source_text(source_field, row)]
+
+
+def _full_laws_with_retry(text, token, base_url):
+    """Get ALL extracted laws (k=API_K, no cap) with retries on transient errors."""
     last = None
     for attempt in range(RETRIES):
         try:
             laws, _, _ = fc.extract_laws_from_text(
-                text, token, base_url=base_url, k_results=K_RESULTS)
+                text, token, base_url=base_url, k_results=API_K, cap=False)
             return laws
         except Exception as e:  # noqa: BLE001
             last = e
             time.sleep(1.5 * (attempt + 1))
     raise last
-_HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(_HERE, "data", "extract_law_bench.json")
-
-
-def _texts(approach, row):
-    if approach.get("granularity") == "subfact":
-        return sc.subfact_list(row)
-    return [sc.source_text(approach.get("source_field", "legal_fact_result"), row)]
 
 
 def main():
@@ -64,32 +73,35 @@ def main():
 
     bundle = sc.build_indexes()
     qdf = bundle["query_df"]
-    variants = [a for a in sc.APPROACHES if a.get("fourcorners")]
+    idx = bundle["indexes"]["laws"]
 
-    cache = {}  # text -> ranked uids (dedup identical texts across queries/variants)
+    laws_cache = {}  # text -> full laws list (one API call per unique text)
     calls = 0
     rankings = {}
-    for a in variants:
-        idx = bundle["indexes"][a["reuses_index"]]
-        per_query = []
+    for field, gran, top_key, all_key in SOURCES:
+        per_query_top, per_query_all = [], []
         for qi, (_, row) in enumerate(qdf.iterrows()):
-            rankings_for_q = []
-            for text in _texts(a, row) or [""]:
-                if text not in cache:
+            top_rk, all_rk = [], []
+            for text in _texts(field, gran, row) or [""]:
+                if text not in laws_cache:
                     calls += 1
                     try:
-                        laws = _extract_with_retry(text, token, base_url)
-                        cache[text] = sc.ranked_uids(idx.search(laws, k=DEPTH)) if laws else []
+                        laws_cache[text] = _full_laws_with_retry(text, token, base_url)
                     except Exception as e:  # noqa: BLE001 — give up after retries
-                        print(f"  ! {a['key']} q{qi} (after {RETRIES} tries): {e}")
-                        cache[text] = []
-                rankings_for_q.append(cache[text])
-            per_query.append(rankings_for_q or [[]])
-        rankings[a["key"]] = per_query
-        print(f"[{a['key']}] done · {len(per_query)} queries · {calls} API calls so far")
+                        print(f"  ! {top_key} q{qi} (after {RETRIES} tries): {e}")
+                        laws_cache[text] = []
+                laws = laws_cache[text]
+                top_rk.append(sc.ranked_uids(idx.search(laws[:TOP_K], k=DEPTH)) if laws else [])
+                all_rk.append(sc.ranked_uids(idx.search(laws, k=DEPTH)) if laws else [])
+            per_query_top.append(top_rk or [[]])
+            per_query_all.append(all_rk or [[]])
+        rankings[top_key] = per_query_top
+        rankings[all_key] = per_query_all
+        print(f"[{field}] done · top-3 + all · {calls} API calls so far")
 
     out = {
-        "k_results": K_RESULTS,
+        "top_k": TOP_K,
+        "api_k": API_K,
         "depth": DEPTH,
         "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "n_queries": len(qdf),

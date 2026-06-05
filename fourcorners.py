@@ -221,19 +221,20 @@ def _parse_law_sections_prose(markdown):
 
 
 def extract_laws_from_text(text, token, base_url=DEFAULT_BASE_URL, *,
-                           k_results=3, max_chars=2000):
+                           k_results=3, max_chars=2000, cap=True):
     """text -> (law_sections, topics_sent, raw_markdown).
 
     The whole text is sent as a SINGLE topic to `search_legal_corpus` (no phrase
     splitting), then the returned markdown is parsed into law-section strings
-    ready for the Laws index. `k_results` caps how many sections the API returns;
-    `max_chars` truncates very long inputs (e.g. a full long_text judgment).
+    ready for the Laws index. `k_results` is the API's `k` (max sections);
+    `max_chars` truncates very long inputs. With `cap=True` the parsed list is
+    sliced to the top `k_results` (predictable count); with `cap=False` every
+    parsed มาตรา is returned ("k off" — use all the API gave back).
     """
     text = " ".join(str(text or "").split())[:max_chars]
     if not text:
         return [], [], ""
     topics = [text]
     md = search_legal_corpus(topics, token, base_url=base_url, k=k_results)
-    # the API may return sections across several law groups (more than k for long
-    # inputs); cap to the top k_results so the extracted count is predictable.
-    return parse_law_sections(md)[:k_results], topics, md
+    laws = parse_law_sections(md)
+    return (laws[:k_results] if cap else laws), topics, md

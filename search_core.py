@@ -156,31 +156,53 @@ APPROACHES = [
         "desc": "การตีความข้อเท็จจริงตามมาตรา(วินิจฉัย)",
     },
     # Extract Law — text --FourCorners semantic search--> มาตรา --(Laws set-index)-->
-    # co-citing cases. 3 variants differ only by the source text; each is judged by the
-    # relevance dimension that matches its source.
+    # co-citing cases. Variants differ by source text and by how many extracted มาตรา
+    # are used: top-3 (cap at k=3) vs all (use every มาตรา the API returns, k off).
     {
-        "key": "extract_law_long", "label": "Extract Law (long text)", "granularity": "case",
+        "key": "extract_law_long", "label": "Extract Law (long text, top-3)", "granularity": "case",
         "repr": text_long,
         "field": "long_text → FourCorners semantic search → laws_list_matra",
         "fourcorners": True, "reuses_index": "laws", "source_field": "long_text",
         "match": "set", "relevance": ("relevance_score", 1),
-        "desc": "ดึงมาตราจาก `long_text` ด้วย semantic search แล้ว co-cite ด้วย set-overlap",
+        "desc": "ดึงมาตราจาก `long_text` (เอา top-3) แล้ว co-cite ด้วย set-overlap",
     },
     {
-        "key": "extract_law_legal", "label": "Extract Law (legal fact)", "granularity": "case",
+        "key": "extract_law_legal", "label": "Extract Law (legal fact, top-3)", "granularity": "case",
         "repr": text_legalfact,
         "field": "legal_fact_result → FourCorners semantic search → laws_list_matra",
         "fourcorners": True, "reuses_index": "laws", "source_field": "legal_fact_result",
-        "match": "set", "relevance": ("legal_fact_result_score", 1),
-        "desc": "ดึงมาตราจาก `legal_fact_result` ด้วย semantic search แล้ว co-cite ด้วย set-overlap",
+        "match": "set", "relevance": ("relevance_score", 1),
+        "desc": "ดึงมาตราจาก `legal_fact_result` (เอา top-3) แล้ว co-cite ด้วย set-overlap",
     },
     {
-        "key": "extract_law_subfact", "label": "Extract Law (subfact)", "granularity": "subfact",
+        "key": "extract_law_subfact", "label": "Extract Law (subfact, top-3)", "granularity": "subfact",
         "repr": text_subfacts_concat,
         "field": "แต่ละ subfact → FourCorners semantic search → laws_list_matra",
         "fourcorners": True, "reuses_index": "laws", "source_field": "subfacts",
-        "match": "set", "relevance": ("subfacts_score", 1),
-        "desc": "ดึงมาตราจากแต่ละ subfact (ทีละอัน) ด้วย semantic search แล้ว co-cite ด้วย set-overlap",
+        "match": "set", "relevance": ("relevance_score", 1),
+        "desc": "ดึงมาตราจากแต่ละ subfact (เอา top-3) แล้ว co-cite ด้วย set-overlap",
+    },
+    # "all" variants — k off: use EVERY มาตรา the API returns (k=20 max), no cap.
+    {
+        "key": "extract_law_long_all", "label": "Extract Law (long text, all)", "granularity": "case",
+        "repr": text_long, "field": "long_text → semantic search → laws (ทั้งหมด)",
+        "fourcorners": True, "reuses_index": "laws", "source_field": "long_text",
+        "match": "set", "relevance": ("relevance_score", 1), "use_all": True,
+        "desc": "ดึงมาตราจาก `long_text` (ใช้ทั้งหมด, ปิด k) แล้ว co-cite ด้วย set-overlap",
+    },
+    {
+        "key": "extract_law_legal_all", "label": "Extract Law (legal fact, all)", "granularity": "case",
+        "repr": text_legalfact, "field": "legal_fact_result → semantic search → laws (ทั้งหมด)",
+        "fourcorners": True, "reuses_index": "laws", "source_field": "legal_fact_result",
+        "match": "set", "relevance": ("relevance_score", 1), "use_all": True,
+        "desc": "ดึงมาตราจาก `legal_fact_result` (ใช้ทั้งหมด, ปิด k) แล้ว co-cite ด้วย set-overlap",
+    },
+    {
+        "key": "extract_law_subfact_all", "label": "Extract Law (subfact, all)", "granularity": "subfact",
+        "repr": text_subfacts_concat, "field": "แต่ละ subfact → semantic search → laws (ทั้งหมด)",
+        "fourcorners": True, "reuses_index": "laws", "source_field": "subfacts",
+        "match": "set", "relevance": ("relevance_score", 1), "use_all": True,
+        "desc": "ดึงมาตราจากแต่ละ subfact (ใช้ทั้งหมด, ปิด k) แล้ว co-cite ด้วย set-overlap",
     },
 ]
 APPROACH_BY_KEY = {a["key"]: a for a in APPROACHES}
