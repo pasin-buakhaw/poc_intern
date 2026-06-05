@@ -31,14 +31,18 @@ DEFAULT_BASE_URL = "http://10.204.100.77:6767"
 # config (token + base url): UI field first, env var fallback
 # --------------------------------------------------------------------------- #
 def get_config():
-    """Return (token, base_url) from streamlit session_state, then env vars."""
-    token, base = "", DEFAULT_BASE_URL
+    """Return (token, base_url): streamlit session_state -> env vars -> default.
+
+    `base` starts empty so an env override actually wins over DEFAULT_BASE_URL
+    (the hardcoded default is only the last resort).
+    """
+    token, base = "", ""
     try:
         import streamlit as st
 
         token = (st.session_state.get("fc_token") or "").strip()
-        base = (st.session_state.get("fc_base_url") or "").strip() or base
-    except ModuleNotFoundError:  # pragma: no cover
+        base = (st.session_state.get("fc_base_url") or "").strip()
+    except Exception:  # pragma: no cover - no streamlit runtime (CLI/tests)
         pass
     token = token or os.environ.get("FOURCORNERS_TOKEN", "").strip()
     base = base or os.environ.get("FOURCORNERS_BASE_URL", "").strip() or DEFAULT_BASE_URL
@@ -137,29 +141,40 @@ _MATRA_RE = re.compile(
     r"มาตรา\s*[0-9]+(?:/[0-9]+)?"
     r"(?:\s*(?:ทวิ|ตรี|จัตวา|เบญจ|ฉ|สัตต|อัฏฐ|นว|ทศ))?"
 )
-_THASH_RE = re.compile(r"th/law/[^\s|)/]+")
+# section URI inside a result bullet: `th/law/<code>/section-<label>`
+_URI_SECTION_RE = re.compile(r"th/law/[^\s`)/]+/section-([^\s`)>]+)")
+_HEADING_RE = re.compile(r"^#{2,6}\s*(.+)$")
 
 
 def _clean_law_name(name):
-    return " ".join(str(name).replace("**", "").split()).strip(" :*—–-|")
+    name = re.sub(r"\(\(.*?\)\)", "", str(name))            # ((unknown law)) annotation
+    name = re.sub(r"\s*[—–-]\s*\d+\s*match\w*.*$", "", name)  # "— 3 matches" suffix
+    name = name.replace("**", "")
+    return " ".join(name.split()).strip(" :*—–-|")
+
+
+def _label_to_matra(label):
+    """URI section label -> 'มาตรา <label>' (e.g. '25' -> 'มาตรา 25')."""
+    return "มาตรา " + str(label).strip().strip("-")
 
 
 def parse_law_sections(markdown):
     """Parse `search_legal_corpus` markdown -> ordered unique ["<law> มาตรา <n>"].
 
-    Handles the documented grouped-by-law markdown:
-        ## <law name> — N matches
-        - **มาตรา 288** | th/law/... | ...
-    and degrades gracefully (regex over the whole blob) if the shape differs.
-    Falls back to bare 'มาตรา N' when no law name is in scope.
+    The real output groups results by law under `## <law name> — N matches`
+    headings, with each match carrying a `th/law/<code>/section-<label>` URI.
+    The section number is read from the URI (authoritative) and paired with the
+    current heading's law name — NOT from the `> ...` statute-text previews,
+    which mention unrelated มาตรา and would add noise.
+
+    Falls back to a prose `มาตรา N` scan if the markdown has no section URIs.
     """
     if not markdown:
         return []
     out, seen = [], set()
 
     def add(law, matra):
-        item = f"{law} {matra}".strip() if law else matra.strip()
-        item = " ".join(item.split())
+        item = " ".join(f"{law} {matra}".split()) if law else matra.strip()
         if item and item not in seen:
             seen.add(item)
             out.append(item)
@@ -169,17 +184,39 @@ def parse_law_sections(markdown):
         line = raw.strip()
         if not line:
             continue
-        # heading line -> may carry the current law name
+        heading = _HEADING_RE.match(line)
+        if heading:
+            name = _clean_law_name(heading.group(1))
+            if name and _LAW_NAME_RE.search(name):
+                current_law = name
+            continue
+        for label in _URI_SECTION_RE.findall(line):
+            add(current_law, _label_to_matra(label))
+
+    if out:
+        return out
+    return _parse_law_sections_prose(markdown)  # markdown without URIs (fallback)
+
+
+def _parse_law_sections_prose(markdown):
+    """Fallback: scan headings for law names + 'มาตรา N' tokens line by line."""
+    out, seen, current_law = [], set(), ""
+    for raw in str(markdown).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
         heading = re.match(r"^#{1,6}\s*(.+)$", line)
         candidate = heading.group(1) if heading else line
         m_name = _LAW_NAME_RE.search(candidate)
         matras = _MATRA_RE.findall(line)
         if m_name and (heading or not matras):
             current_law = _clean_law_name(m_name.group(1))
-        # if a law name and a มาตรา sit on the same line, prefer the inline name
         line_law = _clean_law_name(m_name.group(1)) if m_name else current_law
         for matra in matras:
-            add(line_law, matra)
+            item = " ".join(f"{line_law} {matra}".split()) if line_law else matra
+            if item and item not in seen:
+                seen.add(item)
+                out.append(item)
     return out
 
 
