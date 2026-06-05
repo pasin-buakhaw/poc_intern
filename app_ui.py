@@ -117,7 +117,6 @@ def _render_left(approach, bundle):
         c = cases.get(uid, {})
         crimes = c.get("crimes") or []
         rows.append({
-            "uid": uid,
             "ฎีกา": c.get("deka_no", "-"),
             "ฐานความผิด": ", ".join(str(x) for x in crimes[:2]),
             "relevance_score": int(graded.get(uid, 0)),
@@ -278,7 +277,7 @@ def render_extract_law_page(preselect=None):
             c = cases.get(uid, {})
             crimes = c.get("crimes") or []
             rows.append({
-                "uid": uid, "ฎีกา": c.get("deka_no", "-"),
+                "ฎีกา": c.get("deka_no", "-"),
                 "ฐานความผิด": ", ".join(str(x) for x in crimes[:2]),
                 "relevance_score": int(graded.get(uid, 0)),
             })
