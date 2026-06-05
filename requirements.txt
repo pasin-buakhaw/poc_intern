@@ -3,3 +3,4 @@ rank-bm25>=0.2.2
 pythainlp>=5.0,<6
 pandas>=2.2,<3
 numpy>=1.26,<3
+requests>=2.31,<3

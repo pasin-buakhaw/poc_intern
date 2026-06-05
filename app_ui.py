@@ -8,6 +8,7 @@ Input style differs by approach:
 
 import streamlit as st
 
+import fourcorners as fc
 import search_core as sc
 from ui_common import render_result
 
@@ -188,6 +189,8 @@ def _render_right(approach, bundle):
 
 def render_approach_page(key):
     approach = sc.APPROACH_BY_KEY[key]
+    if approach.get("fourcorners"):
+        return render_extract_law_page(key)
     st.set_page_config(page_title=f"{approach['label']} · Retrieval PoC", layout="wide")
     bundle = sc.build_indexes()
 
@@ -197,3 +200,116 @@ def render_approach_page(key):
         _render_left(approach, bundle)
     with right:
         _render_right(approach, bundle)
+
+
+# --------------------------------------------------------------------------- #
+# Extract Law from text (FourCorners semantic search -> Laws index)
+# --------------------------------------------------------------------------- #
+@st.cache_data(show_spinner=False)
+def _cached_extract(text, token, base_url, k_results, max_topics):
+    """Cache one FourCorners call per (text, token, base) so reruns are free."""
+    return fc.extract_laws_from_text(text, token, base_url=base_url,
+                                     k_results=k_results, max_topics=max_topics)
+
+
+def render_extract_law_page(key):
+    approach = sc.APPROACH_BY_KEY[key]
+    st.set_page_config(page_title=f"{approach['label']} · Retrieval PoC", layout="wide")
+    bundle = sc.build_indexes()
+    qdf, cases = bundle["query_df"], bundle["cases"]
+    laws_index = bundle["indexes"][approach["reuses_index"]]
+
+    st.title(f"Approach: {approach['label']}")
+    st.caption(approach["desc"])
+    token, base_url = fc.render_token_input(st)
+
+    left, right = st.columns([1, 1.3], gap="large")
+
+    # -------- left: pick a demo query + the text to extract laws from -------- #
+    with left:
+        st.subheader("ข้อความตั้งต้น")
+        st.info("🔎 ขั้นตอน: **ข้อความ → semantic search (FourCorners) → มาตรา → "
+                "ค้นคดีที่อ้างมาตราเดียวกัน (co-cite)**")
+        qi = st.selectbox("query ตัวอย่าง", options=list(range(len(qdf))),
+                          format_func=lambda i: _query_option_label(qdf, i),
+                          key=f"demo_sel_{key}")
+        row = qdf.iloc[qi]
+        field = st.selectbox(
+            "ใช้ข้อความจากคอลัมน์ไหนของ query ไปค้น",
+            options=["legal_fact_result", "long_text", "subfacts"],
+            index=["legal_fact_result", "long_text", "subfacts"].index(
+                approach.get("source_field", "legal_fact_result")),
+            key=f"srcfield_{key}",
+        )
+        default_text = sc.source_text(field, row)
+        text = st.text_area("ข้อความที่จะส่งเข้า semantic search (แก้ได้)",
+                            value=default_text, height=180, key=f"text_{key}")
+
+        c1, c2 = st.columns(2)
+        k_results = c1.slider("k (มาตราต่อ topic)", 3, 20, 10, key=f"kres_{key}")
+        max_topics = c2.slider("จำนวน topic phrase", 1, 5, 4, key=f"ntop_{key}")
+        go = st.button("ดึงมาตรา แล้วค้นคดี →", use_container_width=True,
+                       disabled=not (token and text.strip()), key=f"go_{key}")
+
+        # label answer key
+        rel = sc.relevant_uids(row, thr=2)
+        graded = sc.graded_rel(row)
+        st.caption("เฉลย (label): candidate ของ query นี้ — ✓ = relevant (ควรค้นเจอ)")
+        rows = []
+        for uid in sc.query_candidates(row):
+            c = cases.get(uid, {})
+            crimes = c.get("crimes") or []
+            rows.append({
+                "uid": uid, "ฎีกา": c.get("deka_no", "-"),
+                "ฐานความผิด": ", ".join(str(x) for x in crimes[:2]),
+                "relevance": int(graded.get(uid, 0)),
+                "relevant?": "✓" if uid in rel else "·",
+            })
+        st.dataframe(rows, hide_index=True, use_container_width=True)
+
+    # -------- right: run the pipeline, show extracted laws + results -------- #
+    with right:
+        st.subheader("ผลลัพธ์")
+        if go:
+            st.session_state[f"run_{key}"] = {
+                "text": text, "qi": qi, "k_results": k_results, "max_topics": max_topics}
+
+        run = st.session_state.get(f"run_{key}")
+        if not run:
+            st.info("เลือก query และกด 'ดึงมาตรา แล้วค้นคดี →' (ต้องใส่ token ก่อน)")
+            return
+
+        try:
+            laws, topics, raw_md = _cached_extract(
+                run["text"], token, base_url, run["k_results"], run["max_topics"])
+        except Exception as e:  # noqa: BLE001 — show API errors to the user
+            st.error(f"เรียก FourCorners ไม่สำเร็จ: {e}")
+            return
+
+        with st.expander(f"topic ที่ส่งเข้า semantic search ({len(topics)})", expanded=False):
+            for t in topics:
+                st.markdown(f"- {t}")
+        if not laws:
+            st.warning("semantic search ไม่คืนมาตราที่ parse ได้ — ลองปรับข้อความ/topic")
+            with st.expander("ดู raw markdown จาก API"):
+                st.code(raw_md or "(ว่าง)")
+            return
+        st.success(f"ดึงมาได้ **{len(laws)} มาตรา** → ใช้ค้นคดีที่อ้างมาตราเดียวกัน")
+        st.markdown(" ".join(f"`{l}`" for l in laws))
+
+        rrow = qdf.iloc[run["qi"]]
+        relevant = sc.relevant_uids(rrow, thr=2)
+        results = laws_index.search(fc.laws_to_query(laws), k=K)
+        if not results:
+            st.warning("ไม่พบคดีที่อ้างมาตราเหล่านี้")
+            return
+
+        ranked = sc.ranked_uids(results)
+        found = sorted(relevant & set(ranked[:K]))
+        msg = f"ค้นถูกไหม: พบคดีที่ relevant **{len(found)}/{len(relevant)}** ใน top-{K}"
+        (st.success if found else st.warning)(msg)
+        st.caption(f"ผลลัพธ์ top {K} — ✓ = คดีที่ relevant ตามเฉลย")
+        for rank, (unit, score) in enumerate(results):
+            st.divider()
+            mark = "✓" if int(unit["uid"]) in relevant else "·"
+            render_result(unit, score, cases, key=f"{key}_{rank}", mark=mark)

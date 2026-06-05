@@ -12,6 +12,7 @@ Thai tokenizer (pythainlp `newmm`). แต่ละ approach index คนละ 
 | Crimes | `crimes` (keyword) | case |
 | Laws | `laws_list_matra` (keyword) | case |
 | Legal fact result | `legal_fact_result` | case |
+| Extract Law from text | ดึงมาตราจากข้อความด้วย **FourCorners semantic search** → ค้นด้วย Laws index | case |
 
 ## โครงสร้าง
 ```
@@ -71,6 +72,22 @@ Long text 0.48 > Legal fact 0.36 > Laws 0.12
 ทางการไม่มี permalink ต่อคดี คอลัมน์ `link` ใน `candidate.csv`/`query_clean.csv` จึงเปลี่ยนเป็น
 **Google search** key ด้วยเลขฎีกา · case info แสดงเลขฎีกาให้คัดลอก + ลิงก์ Google ·
 ต้นฉบับสำรองที่ `*.csv.bak`
+
+## Extract Law from text (FourCorners semantic search)
+approach นี้จำลอง pipeline จริง: **ข้อความ → semantic search → มาตรา → คดีที่ co-cite**
+1. ส่งข้อความ (default `legal_fact_result`) เข้า `search_legal_corpus` ของ FourCorners
+   (hybrid vector + fulltext) — แตกเป็น topic phrase สั้น ๆ ก่อนส่ง
+2. parse markdown ที่ได้กลับมาเป็นรายการมาตรา (`<law> มาตรา <n>`)
+3. ใช้รายการมาตรานั้นเป็น query ของ **Laws BM25 index** → ได้คดีที่อ้างมาตราเดียวกัน
+   (เหมือน approach Laws แต่มาตรามาจาก search ไม่ใช่ gold ของ query)
+
+**Token:** หน้านี้ (และหน้า Metrics) มีช่อง 🔑 ให้วาง Bearer token ของ FourCorners เอง —
+เก็บใน session เท่านั้น ไม่บันทึกลงดิสก์ · ตั้ง env `FOURCORNERS_TOKEN` / `FOURCORNERS_BASE_URL`
+แทนได้ · base URL ดีฟอลต์ `http://10.204.100.77:6767` (เป็น private network ต้องมี tunnel)
+
+**คะแนนใน Metrics Summary:** ติ๊กช่อง "รวม Extract Law" หลังใส่ token เพื่อให้เรียก API
+ทีละ query (cache ต่อ token+พารามิเตอร์) แล้วคิด nDCG/Hit/Recall/Precision/MRR เทียบ approach อื่น —
+query ที่ API ล้มเหลว/ว่างนับเป็น miss · client อยู่ใน `fourcorners.py` (parser เป็น pure ฟังก์ชัน)
 
 ## เฟสถัดไป (out of scope)
 - retriever แบบ embedding / hybrid / re-rank — เพิ่มเข้า `APPROACHES` ใน `search_core.py` ได้เลย

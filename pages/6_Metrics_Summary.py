@@ -12,12 +12,17 @@ import math
 import pandas as pd
 import streamlit as st
 
+import fourcorners as fc
 import search_core as sc
 
 st.set_page_config(page_title="Metrics Summary · Retrieval PoC", layout="wide")
 
 bundle = sc.build_indexes()
 qdf = bundle["query_df"]
+
+# approaches that retrieve from a BM25 index directly (no network)
+STD_APPROACHES = [a for a in sc.APPROACHES if not a.get("fourcorners")]
+FC_APPROACHES = [a for a in sc.APPROACHES if a.get("fourcorners")]
 
 st.title("Metrics Summary")
 st.caption(
@@ -51,7 +56,7 @@ def _approach_queries(approach, row):
 def all_rankings(depth=RETRIEVAL_DEPTH):
     b = sc.build_indexes()
     out = {}
-    for a in sc.APPROACHES:
+    for a in STD_APPROACHES:
         idx = b["indexes"][a["key"]]
         per_query = []
         for _, row in b["query_df"].iterrows():
@@ -61,7 +66,52 @@ def all_rankings(depth=RETRIEVAL_DEPTH):
     return out
 
 
+@st.cache_data(show_spinner="Calling FourCorners semantic search per query ...")
+def fourcorners_rankings(approach_key, token, base_url, k_results, max_topics,
+                         depth=RETRIEVAL_DEPTH):
+    """extract_law rankings: per query, text -> API -> laws -> Laws index ranking.
+
+    Cached on (token, base, params) so toggling controls doesn't re-hit the API.
+    A query whose API call fails contributes an empty ranking (counts as a miss).
+    """
+    b = sc.build_indexes()
+    a = sc.APPROACH_BY_KEY[approach_key]
+    idx = b["indexes"][a["reuses_index"]]
+    field = a.get("source_field", "legal_fact_result")
+    per_query = []
+    for _, row in b["query_df"].iterrows():
+        text = sc.source_text(field, row)
+        try:
+            laws, _, _ = fc.extract_laws_from_text(
+                text, token, base_url=base_url, k_results=k_results, max_topics=max_topics)
+            ranked = sc.ranked_uids(idx.search(fc.laws_to_query(laws), k=depth)) if laws else []
+        except Exception:  # noqa: BLE001 — a failed/empty query just scores as a miss
+            ranked = []
+        per_query.append([ranked])
+    return per_query
+
+
 rankings = all_rankings()
+
+# ---- opt-in: include the FourCorners "Extract Law" approach (needs token) -----
+included = list(STD_APPROACHES)
+if FC_APPROACHES:
+    st.divider()
+    st.markdown("#### Extract Law from text (FourCorners semantic search)")
+    token, base_url = fc.render_token_input(st, key_prefix="metrics_fc")
+    run_fc = st.checkbox(
+        f"รวมในตาราง — เรียก `search_legal_corpus` {len(qdf)} ครั้ง (ช้า, ต้องมี token)",
+        value=False, disabled=not token, key="run_fc_metrics")
+    fc_k = st.slider("k (มาตราต่อ topic)", 3, 20, 10, key="fc_k_metrics")
+    fc_ntop = st.slider("จำนวน topic phrase", 1, 5, 4, key="fc_ntop_metrics")
+    if run_fc and token:
+        for a in FC_APPROACHES:
+            rankings[a["key"]] = fourcorners_rankings(
+                a["key"], token, base_url, fc_k, fc_ntop)
+            included.append(a)
+    else:
+        st.caption("ยังไม่รวม Extract Law ในตาราง (ติ๊กช่องด้านบนหลังใส่ token เพื่อคิดคะแนน)")
+    st.divider()
 
 # --- controls -----------------------------------------------------------------
 # relevance_score มาจาก 2 มิติ: MF = subfact ตรง, LF = legal fact ตรง
@@ -95,7 +145,7 @@ def _mean(xs):
 
 # --- compute per-approach averages --------------------------------------------
 rows = []
-for a in sc.APPROACHES:
+for a in included:
     hit, rec, prec, mrr, ndcg = [], [], [], [], []
     for i, (_, row) in enumerate(qdf.iterrows()):
         ranking_list = rankings[a["key"]][i]   # list of ranked-uid lists (1+ per query)

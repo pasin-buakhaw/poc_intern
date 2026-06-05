@@ -138,6 +138,16 @@ APPROACHES = [
         "repr": text_legalfact, "field": "legal_fact_result (ผลข้อเท็จจริงทางกฎหมายของ query)",
         "desc": "การตีความข้อเท็จจริงตามมาตรา(วินิจฉัย)",
     },
+    {
+        # text --FourCorners semantic search--> มาตรา --(Laws index)--> co-citing cases
+        "key": "extract_law", "label": "Extract Law from text", "granularity": "case",
+        "repr": text_legalfact,  # default text to extract laws from (legal_fact_result)
+        "field": "legal_fact_result → FourCorners semantic search → laws_list_matra",
+        "fourcorners": True, "reuses_index": "laws", "source_field": "legal_fact_result",
+        "desc": "ดึงมาตรากฎหมายจากข้อความด้วย semantic search ของ FourCorners "
+                "(`search_legal_corpus`) แล้วใช้มาตราที่ได้ไปหาคดีที่อ้างมาตราเดียวกัน "
+                "(co-cite) เหมือน approach Laws — ต้องใส่ API token",
+    },
 ]
 APPROACH_BY_KEY = {a["key"]: a for a in APPROACHES}
 
@@ -145,6 +155,19 @@ APPROACH_BY_KEY = {a["key"]: a for a in APPROACHES}
 def query_text(approach_key, row):
     """Build the query text for an approach from a query row (symmetric repr)."""
     return APPROACH_BY_KEY[approach_key]["repr"](row)
+
+
+# text-source helpers used by FourCorners approaches (extract laws from this text)
+_SOURCE_TEXT = {
+    "legal_fact_result": text_legalfact,
+    "long_text": text_long,
+    "subfacts": text_subfacts_concat,
+}
+
+
+def source_text(field, row):
+    """Raw text of `field` for a row — the input handed to semantic search."""
+    return _SOURCE_TEXT.get(field, text_legalfact)(row)
 
 
 # --------------------------------------------------------------------------- #
@@ -373,11 +396,17 @@ def _build_indexes_impl():
 
     indexes = {}
     for a in APPROACHES:
+        if a.get("reuses_index"):
+            continue  # no own index — aliased to another approach's index below
         if a["granularity"] == "subfact":
             units = build_subfact_units(cand_df)
         else:
             units = build_case_units(cand_records, a)
         indexes[a["key"]] = BM25Index(units)
+    # approaches that retrieve over another approach's index (e.g. extract_law -> laws)
+    for a in APPROACHES:
+        if a.get("reuses_index"):
+            indexes[a["key"]] = indexes[a["reuses_index"]]
 
     return {
         "indexes": indexes,
