@@ -192,7 +192,7 @@ def _render_right(approach, bundle):
 def render_approach_page(key):
     approach = sc.APPROACH_BY_KEY[key]
     if approach.get("fourcorners"):
-        return render_extract_law_page(key)
+        return render_extract_law_page(preselect=key)
     st.set_page_config(page_title=f"{approach['label']} · Retrieval PoC", layout="wide")
     bundle = sc.build_indexes()
 
@@ -213,15 +213,29 @@ def _cached_extract(text, token, base_url, k_results):
     return fc.extract_laws_from_text(text, token, base_url=base_url, k_results=k_results)
 
 
-def render_extract_law_page(key):
-    approach = sc.APPROACH_BY_KEY[key]
-    st.set_page_config(page_title=f"{approach['label']} · Retrieval PoC", layout="wide")
+def render_extract_law_page(preselect=None):
+    """Single page for all 3 Extract-Law variants (source = long_text / legal_fact /
+    per-subfact). Pick a variant -> extract มาตรา via FourCorners -> set-overlap search."""
+    st.set_page_config(page_title="Extract Law · Retrieval PoC", layout="wide")
     bundle = sc.build_indexes()
     qdf, cases = bundle["query_df"], bundle["cases"]
+
+    variants = [a for a in sc.APPROACHES if a.get("fourcorners")]
+    vkeys = [a["key"] for a in variants]
+    default_idx = vkeys.index(preselect) if preselect in vkeys else 0
+
+    st.title("Approach: Extract Law from text")
+    vi = st.selectbox("variant (ใช้ข้อความจากแหล่งไหนไปดึงมาตรา)",
+                      options=list(range(len(variants))),
+                      format_func=lambda i: variants[i]["label"], index=default_idx,
+                      key="extract_variant")
+    approach = variants[vi]
+    key = approach["key"]
+    source_field = approach["source_field"]
+    score_col, thr = approach["relevance"]
     laws_index = bundle["indexes"][approach["reuses_index"]]
 
-    st.title(f"Approach: {approach['label']}")
-    st.caption(approach["desc"])
+    st.caption(approach["desc"] + f"  ·  relevant = `{score_col} ≥ {thr}`")
     token, base_url = fc.render_token_input(st)
 
     left, right = st.columns([1, 1.3], gap="large")
@@ -230,31 +244,36 @@ def render_extract_law_page(key):
     with left:
         st.subheader("ข้อความตั้งต้น")
         st.info("🔎 ขั้นตอน: **ข้อความ → semantic search (FourCorners) → มาตรา → "
-                "ค้นคดีที่อ้างมาตราเดียวกัน (co-cite)**")
+                "ค้นคดีที่อ้างมาตราเดียวกัน (co-cite, set-overlap)**")
         qi = st.selectbox("query ตัวอย่าง", options=list(range(len(qdf))),
                           format_func=lambda i: _query_option_label(qdf, i),
                           key=f"demo_sel_{key}")
         row = qdf.iloc[qi]
-        field = st.selectbox(
-            "ใช้ข้อความจากคอลัมน์ไหนของ query ไปค้น",
-            options=["legal_fact_result", "long_text", "subfacts"],
-            index=["legal_fact_result", "long_text", "subfacts"].index(
-                approach.get("source_field", "legal_fact_result")),
-            key=f"srcfield_{key}",
-        )
-        default_text = sc.source_text(field, row)
-        text = st.text_area("ข้อความที่จะส่งเข้า semantic search (แก้ได้)",
-                            value=default_text, height=180, key=f"text_{key}")
 
-        k_results = st.slider("k (จำนวนมาตราที่ดึงจาก search)", 3, 20, 10, key=f"kres_{key}")
-        st.caption("ข้อความทั้งก้อนถูกส่งเป็น topic เดียวเข้า semantic search")
+        if source_field == "subfacts":  # per-subfact: pick ONE subfact string
+            subs = sc.subfact_list(row)
+            st.caption("เลือก **1 subfact** เพื่อดึงมาตรา (benchmark รันทุก subfact แล้วเฉลี่ย)")
+            if subs:
+                si = st.selectbox("subfact", options=list(range(len(subs))),
+                                  format_func=lambda i: subs[i][:60], key=f"sfsel_{key}")
+                text = st.text_area("ข้อความ subfact (แก้ได้)", value=subs[si],
+                                    height=140, key=f"text_{key}")
+            else:
+                text = st.text_area("ข้อความ subfact", value="", height=140, key=f"text_{key}")
+        else:
+            text = st.text_area("ข้อความที่จะส่งเข้า semantic search (แก้ได้)",
+                                value=sc.source_text(source_field, row), height=180,
+                                key=f"text_{key}")
+
+        k_results = st.slider("k (จำนวนมาตราที่ดึงจาก search)", 3, 20, 3, key=f"kres_{key}")
+        st.caption("ข้อความถูกส่งเป็น topic เดียวเข้า semantic search")
         go = st.button("ดึงมาตรา แล้วค้นคดี →", use_container_width=True,
                        disabled=not (token and text.strip()), key=f"go_{key}")
 
-        # label answer key
-        rel = sc.relevant_uids(row, thr=2)
-        graded = sc.graded_rel(row)
-        st.caption("เฉลย (label): candidate ของ query นี้ — ✓ = relevant (ควรค้นเจอ)")
+        # label answer key (this variant's relevance basis)
+        rel = sc.relevant_uids(row, score_col=score_col, thr=thr)
+        graded = sc.graded_rel(row, score_col=score_col)
+        st.caption(f"เฉลย (label): candidate ของ query นี้ — ✓ = relevant (`{score_col}≥{thr}`)")
         rows = []
         for uid in sc.query_candidates(row):
             c = cases.get(uid, {})
@@ -262,7 +281,7 @@ def render_extract_law_page(key):
             rows.append({
                 "uid": uid, "ฎีกา": c.get("deka_no", "-"),
                 "ฐานความผิด": ", ".join(str(x) for x in crimes[:2]),
-                "relevance": int(graded.get(uid, 0)),
+                "score": int(graded.get(uid, 0)),
                 "relevant?": "✓" if uid in rel else "·",
             })
         st.dataframe(rows, hide_index=True, use_container_width=True)
@@ -297,7 +316,7 @@ def render_extract_law_page(key):
         st.markdown(" ".join(f"`{l}`" for l in laws))
 
         rrow = qdf.iloc[run["qi"]]
-        relevant = sc.relevant_uids(rrow, thr=2)
+        relevant = sc.relevant_uids(rrow, score_col=score_col, thr=thr)
         results = laws_index.search(laws, k=K)  # exact set-overlap on extracted มาตรา
         if not results:
             st.warning("ไม่พบคดีที่อ้างมาตราเหล่านี้")

@@ -127,41 +127,60 @@ APPROACHES = [
     {
         "key": "long_text", "label": "Long text", "granularity": "case",
         "repr": text_long, "field": "long_text (คำพิพากษาฉบับเต็มของ query)",
+        "relevance": ("relevance_score", 1),
         "desc": "คำพิพากษาฉบับเต็ม (`long_text`) — 1 document ต่อ 1 คดี "
-            
+
     },
     {
         "key": "subfacts", "label": "Subfacts", "granularity": "subfact",
         "repr": text_subfacts_concat, "field": "subfacts (ข้อเท็จจริงย่อยทุกอันของ query รวมกัน)",
+        "relevance": ("subfacts_score", 1),
         "desc": "ข้อเท็จจริงย่อย (subfact) ที่เกิดขึ้นในคดี แยกเป็นตามข้อหา"
     },
     {
         "key": "crimes", "label": "Crimes keyword", "granularity": "case",
         "repr": text_crimes, "field": "crimes (ฐานความผิดของ query)", "keyword_facet": "crimes",
-        "match": "set", "items": items_crimes,
+        "match": "set", "items": items_crimes, "relevance": ("relevance_score", 1),
         "desc": "ข้อหา — exact set-overlap นับฐานความผิดที่ตรงกันเป๊ะกับคดี",
     },
     {
         "key": "laws", "label": "Laws keyword", "granularity": "case",
         "repr": text_laws, "field": "laws_list_matra (มาตรากฎหมายของ query)", "keyword_facet": "laws",
-        "match": "set", "items": items_laws,
+        "match": "set", "items": items_laws, "relevance": ("relevance_score", 1),
         "desc": "มาตรากฎหมาย (`laws_list_matra`) — exact set-overlap นับมาตราที่ตรงกันเป๊ะกับคดี",
     },
     {
         "key": "legal_fact", "label": "Legal fact", "granularity": "case",
         "repr": text_legalfact, "field": "legal_fact_result (ผลข้อเท็จจริงทางกฎหมายของ query)",
+        "relevance": ("legal_fact_result_score", 1),
         "desc": "การตีความข้อเท็จจริงตามมาตรา(วินิจฉัย)",
     },
+    # Extract Law — text --FourCorners semantic search--> มาตรา --(Laws set-index)-->
+    # co-citing cases. 3 variants differ only by the source text; each is judged by the
+    # relevance dimension that matches its source.
     {
-        # text --FourCorners semantic search--> มาตรา --(Laws index)--> co-citing cases
-        "key": "extract_law", "label": "Extract Law from text", "granularity": "case",
-        "repr": text_legalfact,  # default text to extract laws from (legal_fact_result)
+        "key": "extract_law_long", "label": "Extract Law (long text)", "granularity": "case",
+        "repr": text_long,
+        "field": "long_text → FourCorners semantic search → laws_list_matra",
+        "fourcorners": True, "reuses_index": "laws", "source_field": "long_text",
+        "match": "set", "relevance": ("relevance_score", 1),
+        "desc": "ดึงมาตราจาก `long_text` ด้วย semantic search แล้ว co-cite ด้วย set-overlap",
+    },
+    {
+        "key": "extract_law_legal", "label": "Extract Law (legal fact)", "granularity": "case",
+        "repr": text_legalfact,
         "field": "legal_fact_result → FourCorners semantic search → laws_list_matra",
         "fourcorners": True, "reuses_index": "laws", "source_field": "legal_fact_result",
-        "match": "set",
-        "desc": "semantic search ของ FourCorners "
-                "แล้วใช้มาตราที่ได้ไปหาคดีที่อ้างมาตราเดียวกัน (co-cite) "
-                "ด้วย exact set-overlap",
+        "match": "set", "relevance": ("legal_fact_result_score", 1),
+        "desc": "ดึงมาตราจาก `legal_fact_result` ด้วย semantic search แล้ว co-cite ด้วย set-overlap",
+    },
+    {
+        "key": "extract_law_subfact", "label": "Extract Law (subfact)", "granularity": "subfact",
+        "repr": text_subfacts_concat,
+        "field": "แต่ละ subfact → FourCorners semantic search → laws_list_matra",
+        "fourcorners": True, "reuses_index": "laws", "source_field": "subfacts",
+        "match": "set", "relevance": ("subfacts_score", 1),
+        "desc": "ดึงมาตราจากแต่ละ subfact (ทีละอัน) ด้วย semantic search แล้ว co-cite ด้วย set-overlap",
     },
 ]
 APPROACH_BY_KEY = {a["key"]: a for a in APPROACHES}
@@ -176,6 +195,19 @@ def query_items(approach_key, row):
     """Query-side item list for a set-overlap approach (the query's own tags)."""
     fn = APPROACH_BY_KEY[approach_key].get("items")
     return fn(row) if fn else []
+
+
+def subfact_list(row):
+    """Flatten a row's subfacts -> list of individual subfact strings."""
+    out = []
+    for entry in parse_cell(_get(row, "subfacts")) or []:
+        if not isinstance(entry, dict):
+            continue
+        subs = entry.get("subfacts") or []
+        if isinstance(subs, str):
+            subs = [subs]
+        out.extend(s for s in (str(x).strip() for x in subs) if s)
+    return out
 
 
 # text-source helpers used by FourCorners approaches (extract laws from this text)

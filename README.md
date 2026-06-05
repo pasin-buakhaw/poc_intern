@@ -74,20 +74,31 @@ Long text 0.48 > Legal fact 0.36 > Laws 0.12
 ต้นฉบับสำรองที่ `*.csv.bak`
 
 ## Extract Law from text (FourCorners semantic search)
-approach นี้จำลอง pipeline จริง: **ข้อความ → semantic search → มาตรา → คดีที่ co-cite**
-1. ส่งข้อความ (default `legal_fact_result`) เข้า `search_legal_corpus` ของ FourCorners
-   (hybrid vector + fulltext) — แตกเป็น topic phrase สั้น ๆ ก่อนส่ง
-2. parse markdown ที่ได้กลับมาเป็นรายการมาตรา (`<law> มาตรา <n>`)
-3. ใช้รายการมาตรานั้นเป็น query ของ **Laws BM25 index** → ได้คดีที่อ้างมาตราเดียวกัน
-   (เหมือน approach Laws แต่มาตรามาจาก search ไม่ใช่ gold ของ query)
+pipeline จริง: **ข้อความ → semantic search → มาตรา → คดีที่ co-cite (exact set-overlap)**
+1. ส่งข้อความ **เป็น topic เดียว** เข้า `search_legal_corpus` ของ FourCorners (hybrid vector+fulltext)
+2. parse markdown → รายการมาตรา (อ่านเลขมาตราจาก URI `th/law/.../section-N` + ชื่อกฎหมายจาก `##` heading)
+3. ใช้มาตราที่ได้ค้น **Laws set-overlap index** → คดีที่อ้างมาตราตรงกันเป๊ะ (`k_results=3` default)
 
-**Token:** หน้านี้ (และหน้า Metrics) มีช่อง 🔑 ให้วาง Bearer token ของ FourCorners เอง —
-เก็บใน session เท่านั้น ไม่บันทึกลงดิสก์ · ตั้ง env `FOURCORNERS_TOKEN` / `FOURCORNERS_BASE_URL`
-แทนได้ · base URL ดีฟอลต์ `http://10.204.100.77:6767` (เป็น private network ต้องมี tunnel)
+**3 variant แยกตามแหล่งข้อความ** (framework เดียวกัน ต่างแค่ source + เกณฑ์ relevant):
+| variant | source text | relevant basis |
+|---|---|---|
+| Extract Law (long text) | `long_text` (ตัดที่ 2000 ตัวอักษร) | `relevance_score≥1` |
+| Extract Law (legal fact) | `legal_fact_result` | `legal_fact_result_score≥1` |
+| Extract Law (subfact) | แต่ละ subfact (ทีละอัน, เฉลี่ยต่อ query) | `subfacts_score≥1` |
 
-**คะแนนใน Metrics Summary:** ติ๊กช่อง "รวม Extract Law" หลังใส่ token เพื่อให้เรียก API
-ทีละ query (cache ต่อ token+พารามิเตอร์) แล้วคิด nDCG/Hit/Recall/Precision/MRR เทียบ approach อื่น —
-query ที่ API ล้มเหลว/ว่างนับเป็น miss · client อยู่ใน `fourcorners.py` (parser เป็น pure ฟังก์ชัน)
+หน้าเว็บรวมเป็นหน้าเดียว มี dropdown เลือก variant (แบบ subfact เลือก subfact ทีละอัน)
+
+**Token:** ช่อง 🔑 วาง Bearer token เอง (เก็บใน session) · env `FOURCORNERS_TOKEN`/`FOURCORNERS_BASE_URL`
+แทนได้ · ต้องมี SSH tunnel ไป API (ดู `run_local.sh`)
+
+**Benchmark (precomputed):** รัน `python precompute_extract_law.py` (ต้องมี tunnel+token) → เขียน
+`data/extract_law_bench.json` (rankings ของ 3 variant ทุก query, ~363 API calls) · หน้า **Metrics Summary**
+โหลดไฟล์นี้แสดงผลทันที **ไม่ต้องใส่ token** (ติ๊ก "🔁 recompute live" เพื่อคิดสดได้) · ดูตารางใน CLI ได้ด้วย
+`python show_benchmark.py 3`
+
+**Relevance ต่อ approach:** แต่ละ approach วัด relevant ด้วยเกณฑ์ของตัวเอง (Subfacts→`subfacts_score`,
+Legal fact→`legal_fact_result_score`, ที่เหลือ→`relevance_score≥1`) แสดงในคอลัมน์ `relevant basis`
+ของตาราง — nDCG ใช้ graded ของเกณฑ์นั้น ๆ (เทียบข้าม approach เป็นค่าชี้นำ)
 
 ## เฟสถัดไป (out of scope)
 - retriever แบบ embedding / hybrid / re-rank — เพิ่มเข้า `APPROACHES` ใน `search_core.py` ได้เลย

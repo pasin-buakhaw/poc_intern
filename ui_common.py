@@ -78,7 +78,7 @@ def _render_facet(approach, unit, case):
     elif approach == "crimes":
         st.caption("ฐานความผิดของคดีนี้ (tags)")
         st.markdown(_chips(case.get("crimes")))
-    elif approach in ("laws", "extract_law"):
+    elif approach == "laws" or str(approach).startswith("extract_law"):
         st.caption("มาตรากฎหมายที่คดีนี้อ้าง (tags)")
         st.markdown(_chips(case.get("laws")))
     elif approach == "legal_fact":
@@ -106,7 +106,7 @@ def render_result(unit, score, cases, key, mark=None, approach=None):
         head = f"{mark}  {head}"
     st.markdown(head)
     # set-overlap approaches score = #items matched; the rest = BM25 float
-    if approach in ("crimes", "laws", "extract_law"):
+    if approach in ("crimes", "laws") or str(approach).startswith("extract_law"):
         score_lbl = f"ตรงกัน {int(score)} รายการ"
     else:
         score_lbl = f"BM25 {score:.3f}"

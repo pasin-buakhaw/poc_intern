@@ -220,14 +220,16 @@ def _parse_law_sections_prose(markdown):
     return out
 
 
-def extract_laws_from_text(text, token, base_url=DEFAULT_BASE_URL, *, k_results=10):
+def extract_laws_from_text(text, token, base_url=DEFAULT_BASE_URL, *,
+                           k_results=3, max_chars=2000):
     """text -> (law_sections, topics_sent, raw_markdown).
 
     The whole text is sent as a SINGLE topic to `search_legal_corpus` (no phrase
     splitting), then the returned markdown is parsed into law-section strings
-    ready for the Laws index. `k_results` caps how many sections the API returns.
+    ready for the Laws index. `k_results` caps how many sections the API returns;
+    `max_chars` truncates very long inputs (e.g. a full long_text judgment).
     """
-    text = " ".join(str(text or "").split())
+    text = " ".join(str(text or "").split())[:max_chars]
     if not text:
         return [], [], ""
     topics = [text]

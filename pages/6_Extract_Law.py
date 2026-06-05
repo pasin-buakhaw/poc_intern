@@ -1,3 +1,3 @@
-from app_ui import render_approach_page
+from app_ui import render_extract_law_page
 
-render_approach_page("extract_law")
+render_extract_law_page()

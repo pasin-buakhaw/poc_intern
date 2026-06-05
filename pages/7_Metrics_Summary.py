@@ -7,13 +7,18 @@ Each approach is evaluated the SAME way it is searched on its page:
                              (matches the page where you search one subfact)
 """
 
+import json
 import math
+import os
 
 import pandas as pd
 import streamlit as st
 
 import fourcorners as fc
 import search_core as sc
+
+_BENCH_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "data", "extract_law_bench.json")
 
 st.set_page_config(page_title="Metrics Summary · Retrieval PoC", layout="wide")
 
@@ -68,74 +73,87 @@ def all_rankings(depth=RETRIEVAL_DEPTH):
     return out
 
 
+def _fc_texts(approach, row):
+    """Source text(s) for an Extract-Law variant: per-subfact list or single field."""
+    if approach.get("granularity") == "subfact":
+        return sc.subfact_list(row)
+    return [sc.source_text(approach.get("source_field", "legal_fact_result"), row)]
+
+
 @st.cache_data(show_spinner="Calling FourCorners semantic search per query ...")
 def fourcorners_rankings(approach_key, token, base_url, k_results,
                          depth=RETRIEVAL_DEPTH):
-    """extract_law rankings: per query, text -> API -> laws -> Laws index ranking.
+    """Live Extract-Law rankings: per query, text(s) -> API -> laws -> set-overlap.
 
-    Cached on (token, base, params) so toggling controls doesn't re-hit the API.
-    A query whose API call fails contributes an empty ranking (counts as a miss).
+    Subfact variant runs one search per subfact (-> several rankings/query). Cached
+    on (token, base, k). A failed/empty search contributes an empty ranking (miss).
     """
     b = sc.build_indexes()
     a = sc.APPROACH_BY_KEY[approach_key]
     idx = b["indexes"][a["reuses_index"]]
-    field = a.get("source_field", "legal_fact_result")
+    cache = {}
     per_query = []
     for _, row in b["query_df"].iterrows():
-        text = sc.source_text(field, row)
-        try:
-            laws, _, _ = fc.extract_laws_from_text(
-                text, token, base_url=base_url, k_results=k_results)
-            ranked = sc.ranked_uids(idx.search(laws, k=depth)) if laws else []
-        except Exception:  # noqa: BLE001 — a failed/empty query just scores as a miss
-            ranked = []
-        per_query.append([ranked])
+        rankings_for_q = []
+        for text in _fc_texts(a, row) or [""]:
+            if text not in cache:
+                try:
+                    laws, _, _ = fc.extract_laws_from_text(
+                        text, token, base_url=base_url, k_results=k_results)
+                    cache[text] = sc.ranked_uids(idx.search(laws, k=depth)) if laws else []
+                except Exception:  # noqa: BLE001 — failed/empty search = miss
+                    cache[text] = []
+            rankings_for_q.append(cache[text])
+        per_query.append(rankings_for_q or [[]])
     return per_query
 
 
-rankings = all_rankings()
+@st.cache_data(show_spinner=False)
+def load_precomputed():
+    """Load data/extract_law_bench.json (precomputed Extract-Law rankings) if present."""
+    if not os.path.exists(_BENCH_FILE):
+        return None
+    with open(_BENCH_FILE, encoding="utf-8") as f:
+        return json.load(f)
 
-# ---- opt-in: include the FourCorners "Extract Law" approach (needs token) -----
+
+rankings = all_rankings()
 included = list(STD_APPROACHES)
+
+# ---- Extract Law variants: precomputed by default, optional live recompute ----
 if FC_APPROACHES:
     st.divider()
     st.markdown("#### Extract Law from text (FourCorners semantic search)")
+    bench = load_precomputed()
     token, base_url = fc.render_token_input(st, key_prefix="metrics_fc")
     run_fc = st.checkbox(
-        f"รวมในตาราง — เรียก `search_legal_corpus` {len(qdf)} ครั้ง (ช้า, ต้องมี token)",
+        f"🔁 recompute live — เรียก API ใหม่ทุก query (ช้า, ต้องมี token)",
         value=False, disabled=not token, key="run_fc_metrics")
-    fc_k = st.slider("k (จำนวนมาตราที่ดึงจาก search)", 3, 20, 10, key="fc_k_metrics")
-    st.caption("ข้อความทั้งก้อนถูกส่งเป็น topic เดียวเข้า semantic search")
+    fc_k = st.slider("k (จำนวนมาตราที่ดึงจาก search)", 3, 20, 3, key="fc_k_metrics")
+
     if run_fc and token:
         for a in FC_APPROACHES:
-            rankings[a["key"]] = fourcorners_rankings(
-                a["key"], token, base_url, fc_k)
+            rankings[a["key"]] = fourcorners_rankings(a["key"], token, base_url, fc_k)
             included.append(a)
+        st.caption(f"คิดสดจาก API (k_results={fc_k})")
+    elif bench and bench.get("rankings"):
+        for a in FC_APPROACHES:
+            pre = bench["rankings"].get(a["key"])
+            if pre is not None:
+                rankings[a["key"]] = pre
+                included.append(a)
+        st.caption(f"ใช้ผล precomputed (k_results={bench.get('k_results')}, "
+                   f"สร้างเมื่อ {bench.get('generated', '-')}) · ติ๊กด้านบนเพื่อคิดสดด้วย token")
     else:
-        st.caption("ยังไม่รวม Extract Law ในตาราง (ติ๊กช่องด้านบนหลังใส่ token เพื่อคิดคะแนน)")
+        st.caption("ยังไม่มีผล precomputed — รัน `precompute_extract_law.py` หรือติ๊ก recompute live")
     st.divider()
 
-# --- controls -----------------------------------------------------------------
-# relevance_score มาจาก 2 มิติ: MF = subfact ตรง, LF = legal fact ตรง
-#   0 = ไม่เกี่ยว · 1 = MF อย่างเดียว · 2 = LF อย่างเดียว · 3 = ตรงทั้ง MF+LF
-_BASIS = {
-    "ทั้ง subfact + legal fact เกี่ยวข้อง": ("relevance_score", 3),
-    "อย่างน้อย legal fact ต้องเกี่ยวข้อง": ("relevance_score", 2),
-    "เกี่ยวข้องกับ subfact หรือ legal factก็ได้": ("relevance_score", 1),
-    "แค่ subfact เกี่ยวข้องเท่านั้น": ("subfacts_score", 1),
-    "แค่ legal fact เกี่ยวข้องเท่านั้น": ("legal_fact_result_score", 1),
-}
-c1, c2 = st.columns(2)
-k = c1.selectbox("k (top-k)", [1, 3, 4, 5, 10], index=2)
-basis = c2.selectbox("วิธีการนับ candidate ว่าเกี่ยวข้อง(relevant)",
-                     list(_BASIS.keys()), index=1)
-score_col, thr = _BASIS[basis]
-
+# --- controls: only k (relevance basis is now per-approach) --------------------
+k = st.selectbox("k (top-k)", [1, 3, 4, 5, 10], index=2)
 st.caption(
-    "ℹ️ **relevance score** มาจาก 2 มิติ — **MF** = ข้อเท็จจริงย่อย (subfact) ตรง, "
-    "**LF** = ผลข้อเท็จจริงทางกฎหมาย (legal fact) ตรง · "
-    "**0** ไม่เกี่ยว · **1** MF อย่างเดียว · **2** LF อย่างเดียว · **3** ตรงทั้งคู่ "
-    "(ตัวเลือกด้านบนใช้กับ Hit/Recall/Precision/MRR; nDCG ใช้ score 0–3 เป็นน้ำหนักเสมอ)"
+    "ℹ️ แต่ละ approach วัด relevant ด้วยเกณฑ์ของตัวเอง (คอลัมน์ **relevant basis** ในตาราง) — "
+    "Subfacts→`subfacts_score`, Legal fact→`legal_fact_result_score`, ที่เหลือ→`relevance_score≥1`; "
+    "Extract Law 3 variant ผูกกับ source · nDCG ใช้ graded ของเกณฑ์นั้น → เทียบข้าม approach เป็นค่าชี้นำ"
 )
 
 
@@ -145,14 +163,15 @@ def _mean(xs):
     return sum(xs) / len(xs) if xs else float("nan")
 
 
-# --- compute per-approach averages --------------------------------------------
+# --- compute per-approach averages (each vs its OWN relevance basis) -----------
 rows = []
 for a in included:
+    score_col, thr = a["relevance"]
     hit, rec, prec, mrr, ndcg = [], [], [], [], []
     for i, (_, row) in enumerate(qdf.iterrows()):
         ranking_list = rankings[a["key"]][i]   # list of ranked-uid lists (1+ per query)
         rel = sc.relevant_uids(row, score_col=score_col, thr=thr)
-        graded = sc.graded_rel(row)            # nDCG always uses graded relevance_score
+        graded = sc.graded_rel(row, score_col=score_col)  # nDCG uses this approach's basis
         # metric per sub-search, then average within this query
         hit.append(_mean([sc.hit_at_k(r, rel, k) for r in ranking_list]))
         rec.append(_mean([sc.recall_at_k(r, rel, k) for r in ranking_list]))
@@ -162,6 +181,7 @@ for a in included:
     rows.append({
         "approach": a["label"],
         "granularity": a["granularity"],
+        "relevant basis": f"{score_col}≥{thr}",
         f"nDCG@{k}": round(_mean(ndcg), 3),
         f"Hit@{k}": round(_mean(hit), 3),
         f"Recall@{k}": round(_mean(rec), 3),
@@ -175,7 +195,7 @@ df = pd.DataFrame(rows).sort_values(f"nDCG@{k}", ascending=False).reset_index(dr
 best = df.iloc[0]
 st.success(f"approach ที่ดีสุด (nDCG@{k}) = **{best['approach']}**  ·  nDCG@{k} = {best[f'nDCG@{k}']}")
 
-num_cols = [c for c in df.columns if c not in ("approach", "granularity")]
+num_cols = [c for c in df.columns if c not in ("approach", "granularity", "relevant basis")]
 st.dataframe(
     df.style.highlight_max(subset=num_cols, color="#91e1a0", axis=0).format(precision=3),
     hide_index=True, use_container_width=True,
@@ -189,7 +209,9 @@ with st.expander("นิยาม metric"):
 - **Recall@{k}** — สัดส่วน relevant ที่เจอใน top-{k}
 - **Precision@{k}** — สัดส่วน top-{k} ที่ relevant
 - **MRR@{k}** — 1/อันดับของ relevant ตัวแรก
-- **Subfacts** วัดแบบค้นทีละ subfact แล้วเฉลี่ยต่อ query (ตรงกับหน้า approach) — ค่าจึงต่ำกว่าเดิมที่รวมทุก subfact
-- relevant (binary) = `{basis}` · nDCG ใช้ graded `relevance_score` เสมอ
+- **Subfacts / Extract Law (subfact)** วัดแบบค้นทีละ subfact แล้วเฉลี่ยต่อ query (ตรงกับหน้า approach)
+- **relevant basis ต่อ approach** — Subfacts→`subfacts_score≥1`, Legal fact→`legal_fact_result_score≥1`,
+  Long text/Crimes/Laws→`relevance_score≥1`; Extract Law variant ผูกกับ source (long→relevance, legal→legal_fact, subfact→subfacts)
+- nDCG ใช้ graded ของเกณฑ์นั้น ๆ (binary 0/1 สำหรับ subfact/legal-fact, 1–3 สำหรับ relevance_score)
 """
     )
