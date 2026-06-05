@@ -49,6 +49,8 @@ def _approach_queries(approach, row):
                 subs = [subs]
             out.extend(s.strip() for s in (str(x) for x in subs) if s.strip())
         return out
+    if approach.get("match") == "set":
+        return [sc.query_items(approach["key"], row)]  # one query = the item list
     return [sc.query_text(approach["key"], row)]
 
 
@@ -84,7 +86,7 @@ def fourcorners_rankings(approach_key, token, base_url, k_results,
         try:
             laws, _, _ = fc.extract_laws_from_text(
                 text, token, base_url=base_url, k_results=k_results)
-            ranked = sc.ranked_uids(idx.search(fc.laws_to_query(laws), k=depth)) if laws else []
+            ranked = sc.ranked_uids(idx.search(laws, k=depth)) if laws else []
         except Exception:  # noqa: BLE001 — a failed/empty query just scores as a miss
             ranked = []
         per_query.append([ranked])

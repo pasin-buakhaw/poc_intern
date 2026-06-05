@@ -233,8 +233,3 @@ def extract_laws_from_text(text, token, base_url=DEFAULT_BASE_URL, *, k_results=
     topics = [text]
     md = search_legal_corpus(topics, token, base_url=base_url, k=k_results)
     return parse_law_sections(md), topics, md
-
-
-def laws_to_query(law_sections):
-    """Join extracted law-section strings into one BM25 query string."""
-    return " ".join(law_sections)

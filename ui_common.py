@@ -105,7 +105,12 @@ def render_result(unit, score, cases, key, mark=None, approach=None):
     if mark:
         head = f"{mark}  {head}"
     st.markdown(head)
-    st.caption(f"ปี {unit.get('year', '-')} · uid {unit['uid']} · BM25 {score:.3f}")
+    # set-overlap approaches score = #items matched; the rest = BM25 float
+    if approach in ("crimes", "laws", "extract_law"):
+        score_lbl = f"ตรงกัน {int(score)} รายการ"
+    else:
+        score_lbl = f"BM25 {score:.3f}"
+    st.caption(f"ปี {unit.get('year', '-')} · uid {unit['uid']} · {score_lbl}")
     _render_facet(approach, unit, case)
     with st.expander("ดู case info จริง"):
         render_case_info(case)

@@ -144,12 +144,14 @@ def _render_right(approach, bundle):
         label = "ฐานความผิด" if facet == "crimes" else "มาตรากฎหมาย"
         picks = st.multiselect(f"แท็ก {label} (เลือกได้หลายอัน)", options=options, key=f"kw_{key}")
         query = " ".join(picks)
+        search_query = picks  # set-overlap matches on the item list, not the joined string
         sig = tuple(sorted(picks))
     else:  # Subfacts / Long text / Legal fact — free text
         ph = "พิมพ์ subfact" if key == "subfacts" else "พิมพ์ค้นหา (ภาษาไทย)"
         q = st.text_input(ph, key=f"q_{key}",
                           placeholder="เช่น ปลอมเอกสาร, เมทแอมเฟตามีน, ฉ้อโกง")
         query = q.strip()
+        search_query = query
         sig = query
 
     if not query:
@@ -164,7 +166,7 @@ def _render_right(approach, bundle):
     is_demo = demo_qi is not None and demo_sig == sig
     relevant = sc.relevant_uids(qdf.iloc[demo_qi], thr=2) if is_demo else set()
 
-    results = index.search(query, k=K)
+    results = index.search(search_query, k=K)
     if not results:
         st.warning("ไม่พบผลลัพธ์")
         return
@@ -296,7 +298,7 @@ def render_extract_law_page(key):
 
         rrow = qdf.iloc[run["qi"]]
         relevant = sc.relevant_uids(rrow, thr=2)
-        results = laws_index.search(fc.laws_to_query(laws), k=K)
+        results = laws_index.search(laws, k=K)  # exact set-overlap on extracted มาตรา
         if not results:
             st.warning("ไม่พบคดีที่อ้างมาตราเหล่านี้")
             return

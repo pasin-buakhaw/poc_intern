@@ -106,6 +106,20 @@ def text_subfacts_concat(row):
     return " ".join(p for p in parts if p and p.strip()).strip()
 
 
+# item lists (for exact set-overlap approaches: crimes / laws / extract_law)
+def items_crimes(row):
+    return [str(x) for x in (parse_cell(_get(row, "crimes")) or []) if str(x).strip()]
+
+
+def items_laws(row):
+    return [str(x) for x in (parse_cell(_get(row, "laws_list_matra")) or []) if str(x).strip()]
+
+
+def norm_item(s):
+    """Canonical key for set-overlap matching (collapse whitespace)."""
+    return " ".join(str(s).split()).strip()
+
+
 # --------------------------------------------------------------------------- #
 # approach registry
 # --------------------------------------------------------------------------- #
@@ -122,19 +136,19 @@ APPROACHES = [
         "desc": "ข้อเท็จจริงย่อย (subfact) ที่เกิดขึ้นในคดี แยกเป็นตามข้อหา"
     },
     {
-        "key": "crimes", "label": "Crimes", "granularity": "case",
+        "key": "crimes", "label": "Crimes keyword", "granularity": "case",
         "repr": text_crimes, "field": "crimes (ฐานความผิดของ query)", "keyword_facet": "crimes",
-        "desc": "ข้อหา — keyword-based เลือกฐานความผิดหลายอัน "
-                "เพื่อหาคดีที่เกี่ยวข้องได้",
+        "match": "set", "items": items_crimes,
+        "desc": "ข้อหา — exact set-overlap นับฐานความผิดที่ตรงกันเป๊ะกับคดี",
     },
     {
-        "key": "laws", "label": "Laws", "granularity": "case",
+        "key": "laws", "label": "Laws keyword", "granularity": "case",
         "repr": text_laws, "field": "laws_list_matra (มาตรากฎหมายของ query)", "keyword_facet": "laws",
-        "desc": "มาตรากฎหมาย (`laws_list_matra`) — keyword-based เลือกมาตราหลายอัน "
-                "เพื่อหาคดีที่เกี่ยวข้องได้",
+        "match": "set", "items": items_laws,
+        "desc": "มาตรากฎหมาย (`laws_list_matra`) — exact set-overlap นับมาตราที่ตรงกันเป๊ะกับคดี",
     },
     {
-        "key": "legal_fact", "label": "Legal fact result", "granularity": "case",
+        "key": "legal_fact", "label": "Legal fact", "granularity": "case",
         "repr": text_legalfact, "field": "legal_fact_result (ผลข้อเท็จจริงทางกฎหมายของ query)",
         "desc": "การตีความข้อเท็จจริงตามมาตรา(วินิจฉัย)",
     },
@@ -144,9 +158,10 @@ APPROACHES = [
         "repr": text_legalfact,  # default text to extract laws from (legal_fact_result)
         "field": "legal_fact_result → FourCorners semantic search → laws_list_matra",
         "fourcorners": True, "reuses_index": "laws", "source_field": "legal_fact_result",
-        "desc": "ดึงมาตรากฎหมายจากข้อความด้วย semantic search ของ FourCorners "
-                "(`search_legal_corpus`) แล้วใช้มาตราที่ได้ไปหาคดีที่อ้างมาตราเดียวกัน "
-                "(co-cite) เหมือน approach Laws — ต้องใส่ API token",
+        "match": "set",
+        "desc": "semantic search ของ FourCorners "
+                "แล้วใช้มาตราที่ได้ไปหาคดีที่อ้างมาตราเดียวกัน (co-cite) "
+                "ด้วย exact set-overlap",
     },
 ]
 APPROACH_BY_KEY = {a["key"]: a for a in APPROACHES}
@@ -155,6 +170,12 @@ APPROACH_BY_KEY = {a["key"]: a for a in APPROACHES}
 def query_text(approach_key, row):
     """Build the query text for an approach from a query row (symmetric repr)."""
     return APPROACH_BY_KEY[approach_key]["repr"](row)
+
+
+def query_items(approach_key, row):
+    """Query-side item list for a set-overlap approach (the query's own tags)."""
+    fn = APPROACH_BY_KEY[approach_key].get("items")
+    return fn(row) if fn else []
 
 
 # text-source helpers used by FourCorners approaches (extract laws from this text)
@@ -204,12 +225,17 @@ def build_subfact_units(cand_df):
 
 
 def build_case_units(cand_records, approach):
-    """One unit per case, text = approach field representation (case granularity)."""
+    """One unit per case, text = approach field representation (case granularity).
+
+    For set-overlap approaches the unit also carries `items` (the case's crime /
+    law list) used for exact matching instead of the tokenized text.
+    """
+    items_fn = approach.get("items")
     units = []
     for r in cand_records:
         txt = approach["repr"](r)
         deka = _get(r, "deka_no")
-        units.append({
+        unit = {
             "uid": int(r["uid"]),
             "deka_no": deka,
             "year": _get(r, "year"),
@@ -217,7 +243,10 @@ def build_case_units(cand_records, approach):
             "title": f"ฎีกา {deka}",
             "snippet": txt[:300],
             "text": txt,
-        })
+        }
+        if items_fn:
+            unit["items"] = items_fn(r)
+        units.append(unit)
     return units
 
 
@@ -256,6 +285,38 @@ class BM25Index:
         k = min(k, len(self.units))
         top = np.argsort(scores)[::-1][:k]
         return [(self.units[i], float(scores[i])) for i in top]
+
+
+class SetOverlapIndex:
+    """Exact set-overlap retrieval: rank cases by |query items ∩ case items|.
+
+    Each unit must carry `items` (e.g. the case's crime or law list). The query
+    is an iterable of items (the query's own tags, or laws extracted from text);
+    a string query is treated as a single item. Only cases with overlap >= 1 are
+    returned, ranked by overlap count, then Jaccard, then uid (deterministic).
+    `score` is the integer overlap count.
+    """
+
+    def __init__(self, units):
+        self.units = units
+        self.sets = [frozenset(norm_item(x) for x in (u.get("items") or []))
+                     for u in units]
+
+    def search(self, query, k=4):
+        if isinstance(query, str):
+            query = [query]
+        qs = frozenset(norm_item(x) for x in (query or []) if str(x).strip())
+        if not qs:
+            return []
+        scored = []
+        for i, cs in enumerate(self.sets):
+            inter = len(qs & cs)
+            if inter == 0:
+                continue
+            jac = inter / len(qs | cs)
+            scored.append((inter, jac, int(self.units[i]["uid"]), i))
+        scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
+        return [(self.units[i], float(inter)) for inter, _, _, i in scored[:k]]
 
 
 # --------------------------------------------------------------------------- #
@@ -399,10 +460,11 @@ def _build_indexes_impl():
         if a.get("reuses_index"):
             continue  # no own index — aliased to another approach's index below
         if a["granularity"] == "subfact":
-            units = build_subfact_units(cand_df)
+            indexes[a["key"]] = BM25Index(build_subfact_units(cand_df))
+        elif a.get("match") == "set":
+            indexes[a["key"]] = SetOverlapIndex(build_case_units(cand_records, a))
         else:
-            units = build_case_units(cand_records, a)
-        indexes[a["key"]] = BM25Index(units)
+            indexes[a["key"]] = BM25Index(build_case_units(cand_records, a))
     # approaches that retrieve over another approach's index (e.g. extract_law -> laws)
     for a in APPROACHES:
         if a.get("reuses_index"):
