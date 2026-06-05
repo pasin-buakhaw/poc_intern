@@ -206,10 +206,9 @@ def render_approach_page(key):
 # Extract Law from text (FourCorners semantic search -> Laws index)
 # --------------------------------------------------------------------------- #
 @st.cache_data(show_spinner=False)
-def _cached_extract(text, token, base_url, k_results, max_topics):
-    """Cache one FourCorners call per (text, token, base) so reruns are free."""
-    return fc.extract_laws_from_text(text, token, base_url=base_url,
-                                     k_results=k_results, max_topics=max_topics)
+def _cached_extract(text, token, base_url, k_results):
+    """Cache one FourCorners call per (text, token, base, k) so reruns are free."""
+    return fc.extract_laws_from_text(text, token, base_url=base_url, k_results=k_results)
 
 
 def render_extract_law_page(key):
@@ -245,9 +244,8 @@ def render_extract_law_page(key):
         text = st.text_area("ข้อความที่จะส่งเข้า semantic search (แก้ได้)",
                             value=default_text, height=180, key=f"text_{key}")
 
-        c1, c2 = st.columns(2)
-        k_results = c1.slider("k (มาตราต่อ topic)", 3, 20, 10, key=f"kres_{key}")
-        max_topics = c2.slider("จำนวน topic phrase", 1, 5, 4, key=f"ntop_{key}")
+        k_results = st.slider("k (จำนวนมาตราที่ดึงจาก search)", 3, 20, 10, key=f"kres_{key}")
+        st.caption("ข้อความทั้งก้อนถูกส่งเป็น topic เดียวเข้า semantic search")
         go = st.button("ดึงมาตรา แล้วค้นคดี →", use_container_width=True,
                        disabled=not (token and text.strip()), key=f"go_{key}")
 
@@ -272,7 +270,7 @@ def render_extract_law_page(key):
         st.subheader("ผลลัพธ์")
         if go:
             st.session_state[f"run_{key}"] = {
-                "text": text, "qi": qi, "k_results": k_results, "max_topics": max_topics}
+                "text": text, "qi": qi, "k_results": k_results}
 
         run = st.session_state.get(f"run_{key}")
         if not run:
@@ -281,14 +279,13 @@ def render_extract_law_page(key):
 
         try:
             laws, topics, raw_md = _cached_extract(
-                run["text"], token, base_url, run["k_results"], run["max_topics"])
+                run["text"], token, base_url, run["k_results"])
         except Exception as e:  # noqa: BLE001 — show API errors to the user
             st.error(f"เรียก FourCorners ไม่สำเร็จ: {e}")
             return
 
-        with st.expander(f"topic ที่ส่งเข้า semantic search ({len(topics)})", expanded=False):
-            for t in topics:
-                st.markdown(f"- {t}")
+        with st.expander("ข้อความที่ส่งเข้า semantic search (topic เดียว)", expanded=False):
+            st.write(topics[0] if topics else "—")
         if not laws:
             st.warning("semantic search ไม่คืนมาตราที่ parse ได้ — ลองปรับข้อความ/topic")
             with st.expander("ดู raw markdown จาก API"):

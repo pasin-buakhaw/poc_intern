@@ -220,41 +220,17 @@ def _parse_law_sections_prose(markdown):
     return out
 
 
-def text_to_topics(text, max_topics=4, max_words=12):
-    """Split long Thai text into a few SHORT topic phrases for the API.
+def extract_laws_from_text(text, token, base_url=DEFAULT_BASE_URL, *, k_results=10):
+    """text -> (law_sections, topics_sent, raw_markdown).
 
-    The manifest wants 1-5 short keyword phrases (3-7 words). We segment on
-    common Thai clause delimiters and trim each clause to `max_words`. Falls
-    back to the whole (trimmed) text as a single topic.
+    The whole text is sent as a SINGLE topic to `search_legal_corpus` (no phrase
+    splitting), then the returned markdown is parsed into law-section strings
+    ready for the Laws index. `k_results` caps how many sections the API returns.
     """
     text = " ".join(str(text or "").split())
     if not text:
-        return []
-    parts = re.split(r"[\n。．.!?;]|ฯลฯ|\s+และ\s+|\s+หรือ\s+|\s+เนื่องจาก\s+", text)
-    topics = []
-    for p in parts:
-        p = p.strip(" ,;:·-")
-        if not p:
-            continue
-        words = p.split()
-        topics.append(" ".join(words[:max_words]))
-        if len(topics) >= max_topics:
-            break
-    if not topics:
-        topics = [" ".join(text.split()[: max_words * 2])]
-    return topics
-
-
-def extract_laws_from_text(text, token, base_url=DEFAULT_BASE_URL, *,
-                           k_results=10, max_topics=4):
-    """text -> (law_sections, topics_sent, raw_markdown).
-
-    Calls `search_legal_corpus` with topics derived from the text, then parses
-    the returned markdown into law-section strings ready for the Laws index.
-    """
-    topics = text_to_topics(text, max_topics=max_topics)
-    if not topics:
         return [], [], ""
+    topics = [text]
     md = search_legal_corpus(topics, token, base_url=base_url, k=k_results)
     return parse_law_sections(md), topics, md
 

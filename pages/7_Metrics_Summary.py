@@ -67,7 +67,7 @@ def all_rankings(depth=RETRIEVAL_DEPTH):
 
 
 @st.cache_data(show_spinner="Calling FourCorners semantic search per query ...")
-def fourcorners_rankings(approach_key, token, base_url, k_results, max_topics,
+def fourcorners_rankings(approach_key, token, base_url, k_results,
                          depth=RETRIEVAL_DEPTH):
     """extract_law rankings: per query, text -> API -> laws -> Laws index ranking.
 
@@ -83,7 +83,7 @@ def fourcorners_rankings(approach_key, token, base_url, k_results, max_topics,
         text = sc.source_text(field, row)
         try:
             laws, _, _ = fc.extract_laws_from_text(
-                text, token, base_url=base_url, k_results=k_results, max_topics=max_topics)
+                text, token, base_url=base_url, k_results=k_results)
             ranked = sc.ranked_uids(idx.search(fc.laws_to_query(laws), k=depth)) if laws else []
         except Exception:  # noqa: BLE001 — a failed/empty query just scores as a miss
             ranked = []
@@ -102,12 +102,12 @@ if FC_APPROACHES:
     run_fc = st.checkbox(
         f"รวมในตาราง — เรียก `search_legal_corpus` {len(qdf)} ครั้ง (ช้า, ต้องมี token)",
         value=False, disabled=not token, key="run_fc_metrics")
-    fc_k = st.slider("k (มาตราต่อ topic)", 3, 20, 10, key="fc_k_metrics")
-    fc_ntop = st.slider("จำนวน topic phrase", 1, 5, 4, key="fc_ntop_metrics")
+    fc_k = st.slider("k (จำนวนมาตราที่ดึงจาก search)", 3, 20, 10, key="fc_k_metrics")
+    st.caption("ข้อความทั้งก้อนถูกส่งเป็น topic เดียวเข้า semantic search")
     if run_fc and token:
         for a in FC_APPROACHES:
             rankings[a["key"]] = fourcorners_rankings(
-                a["key"], token, base_url, fc_k, fc_ntop)
+                a["key"], token, base_url, fc_k)
             included.append(a)
     else:
         st.caption("ยังไม่รวม Extract Law ในตาราง (ติ๊กช่องด้านบนหลังใส่ token เพื่อคิดคะแนน)")
