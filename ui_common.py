@@ -57,22 +57,55 @@ def render_case_info(case):
         st.write(str(long_text))
 
 
-def render_result(unit, score, cases, key, mark=None):
-    """Render one result block (generic unit) + expander with real case info.
+def _chips(items):
+    """Render a list as inline code 'chips' (`tag` `tag`), or — when empty."""
+    items = [str(x).strip() for x in _as_list(items) if str(x).strip()]
+    return " ".join(f"`{x}`" for x in items) if items else "—"
 
-    Works for both case-level units (title="ฎีกา ...", snippet=field text) and
-    subfact units (title=crime, snippet=subfact). `mark` is an optional status
-    string shown next to the header (e.g. "✓" / "·").
+
+def _render_facet(approach, unit, case):
+    """Show the facet of the matched case that THIS approach searched on.
+
+    Makes it obvious what each approach matched: crimes/laws as tags, subfacts
+    as ข้อหา + ข้อเท็จจริงย่อย, long_text/legal_fact as text.
     """
-    title = unit.get("title") or unit.get("crime") or f"ฎีกา {unit.get('deka_no', '-')}"
-    snippet = unit.get("snippet") or unit.get("subfact") or ""
-    head = f"**{title}**"
+    if approach == "subfacts":
+        crime = unit.get("crime") or ""
+        if crime:
+            st.markdown(f"**ข้อหา:** {crime}")
+        st.caption("ข้อเท็จจริงย่อย (subfact) ที่ตรง")
+        st.write(unit.get("snippet") or "—")
+    elif approach == "crimes":
+        st.caption("ฐานความผิดของคดีนี้ (tags)")
+        st.markdown(_chips(case.get("crimes")))
+    elif approach in ("laws", "extract_law"):
+        st.caption("มาตรากฎหมายที่คดีนี้อ้าง (tags)")
+        st.markdown(_chips(case.get("laws")))
+    elif approach == "legal_fact":
+        st.caption("ผลข้อเท็จจริงทางกฎหมาย")
+        st.write(case.get("legal_fact_result") or unit.get("snippet") or "—")
+    elif approach == "long_text":
+        st.caption("คำพิพากษา (ตัดตอน)")
+        txt = str(case.get("long_text") or unit.get("snippet") or "")
+        st.write((txt[:400] + "…") if len(txt) > 400 else (txt or "—"))
+    else:  # unknown approach -> generic snippet
+        snippet = unit.get("snippet") or unit.get("subfact") or ""
+        st.write(snippet or "—")
+
+
+def render_result(unit, score, cases, key, mark=None, approach=None):
+    """Render one result block + expander with real case info.
+
+    Title is always the ฎีกา number; the body below it changes with `approach`
+    so it's clear what data was matched. `mark` is an optional status string
+    shown next to the header (e.g. "✓" / "·").
+    """
+    case = cases.get(int(unit["uid"])) or {}
+    head = f"**ฎีกา {unit.get('deka_no', '-')}**"
     if mark:
         head = f"{mark}  {head}"
     st.markdown(head)
-    st.caption(f"ฎีกา {unit.get('deka_no', '-')} · ปี {unit.get('year', '-')} · "
-               f"uid {unit['uid']} · BM25 {score:.3f}")
-    if snippet:
-        st.write(snippet)
+    st.caption(f"ปี {unit.get('year', '-')} · uid {unit['uid']} · BM25 {score:.3f}")
+    _render_facet(approach, unit, case)
     with st.expander("ดู case info จริง"):
-        render_case_info(cases.get(int(unit["uid"])))
+        render_case_info(case)

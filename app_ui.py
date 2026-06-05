@@ -184,7 +184,7 @@ def _render_right(approach, bundle):
     for rank, (unit, score) in enumerate(results):
         st.divider()
         mark = ("✓" if int(unit["uid"]) in relevant else "·") if is_demo else None
-        render_result(unit, score, cases, key=f"{key}_{rank}", mark=mark)
+        render_result(unit, score, cases, key=f"{key}_{rank}", mark=mark, approach=key)
 
 
 def render_approach_page(key):
@@ -309,4 +309,4 @@ def render_extract_law_page(key):
         for rank, (unit, score) in enumerate(results):
             st.divider()
             mark = "✓" if int(unit["uid"]) in relevant else "·"
-            render_result(unit, score, cases, key=f"{key}_{rank}", mark=mark)
+            render_result(unit, score, cases, key=f"{key}_{rank}", mark=mark, approach=key)
