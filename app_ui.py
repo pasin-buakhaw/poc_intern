@@ -108,10 +108,10 @@ def _render_left(approach, bundle):
         with st.container(height=220, border=True):
             st.write(qtext or "—")
 
-    # ---- label answer key (which candidates are relevant) ----
-    rel = sc.relevant_uids(row, thr=2)
-    graded = sc.graded_rel(row)
-    st.caption("เฉลย (label): candidate ของ query นี้ — ✓ = relevant (ควรค้นเจอ)")
+    # ---- label answer key: candidate + relevance_score (relevant = score >= 1) ----
+    graded = sc.graded_rel(row)  # relevance_score 1/2/3
+    st.caption("เฉลย (label): candidate ของ query นี้ + คะแนน `relevance_score` "
+               "(relevant = score ≥ 1)")
     rows = []
     for uid in sc.query_candidates(row):
         c = cases.get(uid, {})
@@ -120,8 +120,7 @@ def _render_left(approach, bundle):
             "uid": uid,
             "ฎีกา": c.get("deka_no", "-"),
             "ฐานความผิด": ", ".join(str(x) for x in crimes[:2]),
-            "relevance": int(graded.get(uid, 0)),
-            "relevant?": "✓" if uid in rel else "·",
+            "relevance_score": int(graded.get(uid, 0)),
         })
     st.dataframe(rows, hide_index=True, use_container_width=True)
 
@@ -164,7 +163,7 @@ def _render_right(approach, bundle):
     demo_qi = st.session_state.get(f"demo_qi_{key}")
     demo_sig = st.session_state.get(f"demo_sig_{key}")
     is_demo = demo_qi is not None and demo_sig == sig
-    relevant = sc.relevant_uids(qdf.iloc[demo_qi], thr=2) if is_demo else set()
+    relevant = sc.relevant_uids(qdf.iloc[demo_qi], thr=1) if is_demo else set()
 
     results = index.search(search_query, k=K)
     if not results:
@@ -232,10 +231,10 @@ def render_extract_law_page(preselect=None):
     approach = variants[vi]
     key = approach["key"]
     source_field = approach["source_field"]
-    score_col, thr = approach["relevance"]
+    score_col, thr = "relevance_score", 1  # measure relevant the same everywhere
     laws_index = bundle["indexes"][approach["reuses_index"]]
 
-    st.caption(approach["desc"] + f"  ·  relevant = `{score_col} ≥ {thr}`")
+    st.caption(approach["desc"] + "  ·  relevant = `relevance_score ≥ 1`")
     token, base_url = fc.render_token_input(st)
 
     left, right = st.columns([1, 1.3], gap="large")
@@ -270,10 +269,10 @@ def render_extract_law_page(preselect=None):
         go = st.button("ดึงมาตรา แล้วค้นคดี →", use_container_width=True,
                        disabled=not (token and text.strip()), key=f"go_{key}")
 
-        # label answer key (this variant's relevance basis)
-        rel = sc.relevant_uids(row, score_col=score_col, thr=thr)
+        # label answer key: candidate + relevance_score (relevant = score >= 1)
         graded = sc.graded_rel(row, score_col=score_col)
-        st.caption(f"เฉลย (label): candidate ของ query นี้ — ✓ = relevant (`{score_col}≥{thr}`)")
+        st.caption("เฉลย (label): candidate ของ query นี้ + คะแนน `relevance_score` "
+                   "(relevant = score ≥ 1)")
         rows = []
         for uid in sc.query_candidates(row):
             c = cases.get(uid, {})
@@ -281,8 +280,7 @@ def render_extract_law_page(preselect=None):
             rows.append({
                 "uid": uid, "ฎีกา": c.get("deka_no", "-"),
                 "ฐานความผิด": ", ".join(str(x) for x in crimes[:2]),
-                "score": int(graded.get(uid, 0)),
-                "relevant?": "✓" if uid in rel else "·",
+                "relevance_score": int(graded.get(uid, 0)),
             })
         st.dataframe(rows, hide_index=True, use_container_width=True)
 
